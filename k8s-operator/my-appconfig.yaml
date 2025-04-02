@@ -1,0 +1,61 @@
+apiVersion: myapp.example.com/v1alpha1
+kind: AppConfig
+metadata:
+  name: microservices-demo
+  namespace: boutique
+spec:
+  services:
+    - name: adservice
+      requiredCPU: "50m"
+      requiredMemory: "180Mi"
+      availability: 0.99
+    - name: cartservice
+      requiredCPU: "50m"
+      requiredMemory: "128Mi"
+      availability: 0.99
+    - name: checkoutservice
+      requiredCPU: "50m"
+      requiredMemory: "128Mi"
+      availability: 0.99
+    - name: currencyservice
+      requiredCPU: "50m"
+      requiredMemory: "128Mi"
+      availability: 0.9
+    - name: emailservice
+      requiredCPU: "50m"
+      requiredMemory: "128Mi"
+      availability: 0.99
+    - name: frontend
+      requiredCPU: "200m"
+      requiredMemory: "256Mi"
+      availability: 0.99
+    - name: paymentservice
+      requiredCPU: "50m"
+      requiredMemory: "128Mi"
+      availability: 0.99
+    - name: productcatalogservice
+      requiredCPU: "50m"
+      requiredMemory: "128Mi"
+      availability: 0.9
+    - name: recommendationservice
+      requiredCPU: "50m"
+      requiredMemory: "128Mi"
+      availability: 0.99
+    - name: shippingservice
+      requiredCPU: "50m"
+      requiredMemory: "128Mi"
+      availability: 0.99
+  preferences:
+    minReplicas: 1
+    maxReplicas: 4
+    resourceLimit: "2n"
+    # 以下はアルゴリズム用の追加定数
+    rAdds: [0.8, 1, 1.2]
+    generation: 10
+    numStart: 50
+    numNext: 10
+    average: 10
+    H: 100
+status:
+  groups: []          # サービスグループ化の結果（オプション）
+  optimizationResult: {}  # アルゴリズムの結果（例：最適なグループ構成、RUE値など）

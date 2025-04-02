@@ -1,0 +1,21 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: k6-load-test
+  namespace: boutique
+spec:
+  template:
+    spec:
+      containers:
+      - name: k6
+        image: loadimpact/k6
+        command: ["k6", "run", "/k6/test-front.js"]
+        volumeMounts:
+        - name: test-script
+          mountPath: /scripts
+      restartPolicy: Never
+      volumes:
+      - name: test-script
+        configMap:
+          name: k6-test-script
+

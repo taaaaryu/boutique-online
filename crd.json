@@ -1,0 +1,164 @@
+{
+    "apiVersion": "apiextensions.k8s.io/v1",
+    "kind": "CustomResourceDefinition",
+    "metadata": {
+        "annotations": {
+            "kubectl.kubernetes.io/last-applied-configuration": "{\"apiVersion\":\"apiextensions.k8s.io/v1\",\"kind\":\"CustomResourceDefinition\",\"metadata\":{\"annotations\":{},\"name\":\"appconfigs.myapp.example.com\"},\"spec\":{\"group\":\"myapp.example.com\",\"names\":{\"kind\":\"AppConfig\",\"listKind\":\"AppConfigList\",\"plural\":\"appconfigs\",\"singular\":\"appconfig\"},\"scope\":\"Namespaced\",\"versions\":[{\"name\":\"v1alpha1\",\"schema\":{\"openAPIV3Schema\":{\"properties\":{\"spec\":{\"properties\":{\"preferences\":{\"properties\":{\"grouping\":{\"enum\":[\"optimize\",\"consolidate\",\"isolate\"],\"type\":\"string\"},\"maxReplicas\":{\"minimum\":1,\"type\":\"integer\"},\"minReplicas\":{\"minimum\":1,\"type\":\"integer\"},\"r_add\":{\"type\":\"number\"},\"resourceLimit\":{\"type\":\"string\"}},\"type\":\"object\"},\"services\":{\"items\":{\"properties\":{\"availability\":{\"type\":\"number\"},\"name\":{\"type\":\"string\"},\"requiredCPU\":{\"type\":\"string\"},\"requiredMemory\":{\"type\":\"string\"}},\"type\":\"object\"},\"type\":\"array\"}},\"type\":\"object\"},\"status\":{\"properties\":{\"currentConfiguration\":{\"items\":{\"properties\":{\"groupName\":{\"type\":\"string\"},\"replicas\":{\"type\":\"integer\"},\"services\":{\"items\":{\"type\":\"string\"},\"type\":\"array\"}},\"type\":\"object\"},\"type\":\"array\"},\"systemAvailability\":{\"type\":\"number\"}},\"type\":\"object\",\"x-kubernetes-preserve-unknown-fields\":true}},\"type\":\"object\"}},\"served\":true,\"storage\":true,\"subresources\":{\"status\":{}}}]}}\n"
+        },
+        "creationTimestamp": "2025-03-03T03:01:23Z",
+        "deletionGracePeriodSeconds": 0,
+        "deletionTimestamp": "2025-03-10T07:03:51Z",
+        "finalizers": [
+            "customresourcecleanup.apiextensions.k8s.io"
+        ],
+        "generation": 2,
+        "name": "appconfigs.myapp.example.com",
+        "resourceVersion": "3467083",
+        "uid": "57bfa328-4045-4de5-9157-d1e19d8720cb"
+    },
+    "spec": {
+        "conversion": {
+            "strategy": "None"
+        },
+        "group": "myapp.example.com",
+        "names": {
+            "kind": "AppConfig",
+            "listKind": "AppConfigList",
+            "plural": "appconfigs",
+            "singular": "appconfig"
+        },
+        "scope": "Namespaced",
+        "versions": [
+            {
+                "name": "v1alpha1",
+                "schema": {
+                    "openAPIV3Schema": {
+                        "properties": {
+                            "spec": {
+                                "properties": {
+                                    "preferences": {
+                                        "properties": {
+                                            "grouping": {
+                                                "enum": [
+                                                    "optimize",
+                                                    "consolidate",
+                                                    "isolate"
+                                                ],
+                                                "type": "string"
+                                            },
+                                            "maxReplicas": {
+                                                "minimum": 1,
+                                                "type": "integer"
+                                            },
+                                            "minReplicas": {
+                                                "minimum": 1,
+                                                "type": "integer"
+                                            },
+                                            "r_add": {
+                                                "type": "number"
+                                            },
+                                            "resourceLimit": {
+                                                "type": "string"
+                                            }
+                                        },
+                                        "type": "object"
+                                    },
+                                    "services": {
+                                        "items": {
+                                            "properties": {
+                                                "availability": {
+                                                    "type": "number"
+                                                },
+                                                "name": {
+                                                    "type": "string"
+                                                },
+                                                "requiredCPU": {
+                                                    "type": "string"
+                                                },
+                                                "requiredMemory": {
+                                                    "type": "string"
+                                                }
+                                            },
+                                            "type": "object"
+                                        },
+                                        "type": "array"
+                                    }
+                                },
+                                "type": "object"
+                            },
+                            "status": {
+                                "properties": {
+                                    "currentConfiguration": {
+                                        "items": {
+                                            "properties": {
+                                                "groupName": {
+                                                    "type": "string"
+                                                },
+                                                "replicas": {
+                                                    "type": "integer"
+                                                },
+                                                "services": {
+                                                    "items": {
+                                                        "type": "string"
+                                                    },
+                                                    "type": "array"
+                                                }
+                                            },
+                                            "type": "object"
+                                        },
+                                        "type": "array"
+                                    },
+                                    "systemAvailability": {
+                                        "type": "number"
+                                    }
+                                },
+                                "type": "object",
+                                "x-kubernetes-preserve-unknown-fields": true
+                            }
+                        },
+                        "type": "object"
+                    }
+                },
+                "served": true,
+                "storage": true,
+                "subresources": {
+                    "status": {}
+                }
+            }
+        ]
+    },
+    "status": {
+        "acceptedNames": {
+            "kind": "AppConfig",
+            "listKind": "AppConfigList",
+            "plural": "appconfigs",
+            "singular": "appconfig"
+        },
+        "conditions": [
+            {
+                "lastTransitionTime": "2025-03-03T03:01:23Z",
+                "message": "no conflicts found",
+                "reason": "NoConflicts",
+                "status": "True",
+                "type": "NamesAccepted"
+            },
+            {
+                "lastTransitionTime": "2025-03-03T03:01:23Z",
+                "message": "the initial names have been accepted",
+                "reason": "InitialNamesAccepted",
+                "status": "True",
+                "type": "Established"
+            },
+            {
+                "lastTransitionTime": "2025-03-10T07:03:51Z",
+                "message": "CustomResource deletion is in progress",
+                "reason": "InstanceDeletionInProgress",
+                "status": "True",
+                "type": "Terminating"
+            }
+        ],
+        "storedVersions": [
+            "v1alpha1"
+        ]
+    }
+}
