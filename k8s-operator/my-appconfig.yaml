@@ -13,34 +13,30 @@ spec:
       requiredCPU: "50m"
       requiredMemory: "128Mi"
       availability: 0.99
-    - name: checkoutservice
-      requiredCPU: "50m"
-      requiredMemory: "128Mi"
-      availability: 0.99
-    - name: currencyservice
-      requiredCPU: "50m"
-      requiredMemory: "128Mi"
-      availability: 0.9
+    #- name: checkoutservice
+     # requiredCPU: "50m"
+    # requiredMemory: "128Mi"
+    # availability: 0.99
+    #- name: currencyservice
+    #  requiredCPU: "50m"
+    #  requiredMemory: "128Mi"
+    #  availability: 0.99
     - name: emailservice
       requiredCPU: "50m"
       requiredMemory: "128Mi"
       availability: 0.99
-    - name: frontend
-      requiredCPU: "200m"
-      requiredMemory: "256Mi"
-      availability: 0.99
-    - name: paymentservice
-      requiredCPU: "50m"
-      requiredMemory: "128Mi"
-      availability: 0.99
+    #- name: paymentservice
+    #  requiredCPU: "50m"
+    #  requiredMemory: "128Mi"
+    #  availability: 0.99
     - name: productcatalogservice
       requiredCPU: "50m"
       requiredMemory: "128Mi"
-      availability: 0.9
-    - name: recommendationservice
-      requiredCPU: "50m"
-      requiredMemory: "128Mi"
       availability: 0.99
+    #- name: recommendationservice
+    #  requiredCPU: "50m"
+    #  requiredMemory: "128Mi"
+    #  availability: 0.99
     - name: shippingservice
       requiredCPU: "50m"
       requiredMemory: "128Mi"
@@ -56,6 +52,7 @@ spec:
     numNext: 10
     average: 10
     H: 100
+    #targetAvailability: 0.999  # 目標可用性を99.9%に設定
 status:
   groups: []          # サービスグループ化の結果（オプション）
   optimizationResult: {}  # アルゴリズムの結果（例：最適なグループ構成、RUE値など）

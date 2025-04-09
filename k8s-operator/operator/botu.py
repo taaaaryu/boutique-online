@@ -254,6 +254,20 @@ def parse_resource_limit(resource_limit_str, num_services):
 # Operator本体：CRD を監視して、最適化アルゴリズムを実行し、結果をCRD statusに反映
 # ---------------------------
 @kopf.on.create('myapp.example.com', 'v1alpha1', 'appconfigs')
+
+
+# Kopf タイマー: 60秒ごとにCRDのspec.servicesのavailabilityをランダム更新
+@kopf.timer('myapp.example.com', 'v1alpha1', 'appconfigs', interval=120.0)
+def update_availability(spec, patch, logger, **kwargs):
+    services_spec = spec.get('services', [])
+    new_services = []
+    for s in services_spec:
+        s['availability'] = round(random.uniform(0.85, 0.9999), 4)
+        new_services.append(s)
+    patch.spec['services'] = new_services
+    logger.info(f"Updated availabilities: {[s['availability'] for s in new_services]}")
+
+
 @kopf.on.update('myapp.example.com', 'v1alpha1', 'appconfigs')
 def optimize_appconfig(spec, meta, status, logger, **kwargs):
     namespace = meta.get('namespace', 'boutique')
@@ -263,7 +277,7 @@ def optimize_appconfig(spec, meta, status, logger, **kwargs):
     # CRDから定数を読み取る
     r_adds = preferences.get('rAdds', [0.8, 1, 1.2])
     # ここでは任意のr_add値、例えばr_adds[1]を使用
-    r_add = 1.1
+    r_add = 1.05
     generation = int(preferences.get('generation', GENERATION))
     NUM_START = int(preferences.get('numStart', 50))
     NUM_NEXT_local = int(preferences.get('numNext', NUM_NEXT))
@@ -342,114 +356,169 @@ def optimize_appconfig(spec, meta, status, logger, **kwargs):
     except Exception as e:
         logger.error(f"Error listing deployments: {e}")
 
-    # Deploymentの更新：各グループごとにDeploymentを作成またはパッチ
+    # Deploymentの更新：各グループごとにDeploymentを作成
     try:
         kubernetes.config.load_incluster_config()
     except kubernetes.config.config_exception.ConfigException:
         kubernetes.config.load_kube_config()
 
+    api = kubernetes.client.AppsV1Api()
+    core_api = kubernetes.client.CoreV1Api()
 
-    for idx, group in enumerate(groups):
-        deployment_name = f"group-{idx}"
-        group_service_names = [services_spec[i]['name'] for i in [x - 1 for x in group]]
-        containers = []
-        for svc in group_service_names:
-            containers.append({
-                "name": svc,
-                "image": f"us-central1-docker.pkg.dev/google-samples/microservices-demo/{svc}:v0.10.2",
-                "resources": {
-                    "requests": {
-                        "cpu": next(s['requiredCPU'] for s in services_spec if s['name'] == svc),
-                        "memory": next(s['requiredMemory'] for s in services_spec if s['name'] == svc),
+    for group in final_group_details:
+        try:
+            # 各サービスコンテナの定義
+            containers = []
+            for service_name in group['services']:
+                # サービスごとにコンテナ定義を作成
+                container = {
+                    'name': service_name,
+                    'image': f"gcr.io/google-samples/microservices-demo/{service_name}:v0.3.9",
+                    'imagePullPolicy': 'IfNotPresent',  # 既存イメージを使用
+                    'resources': {
+                        'requests': {
+                            'cpu': f"{next((s['requiredCPU'] for s in services_spec if s['name'] == service_name), '50m')}",
+                            'memory': f"{next((s['requiredMemory'] for s in services_spec if s['name'] == service_name), '128Mi')}"
+                        },
+                        'limits': {
+                            'cpu': f"{next((s['requiredCPU'] for s in services_spec if s['name'] == service_name), '50m')}",
+                            'memory': f"{next((s['requiredMemory'] for s in services_spec if s['name'] == service_name), '128Mi')}"
+                        }
+                    },
+                    'ports': [{'containerPort': 8080 + idx}],  # 各コンテナにユニークなポート番号
+                    'env': [{
+                        'name': 'PORT',
+                        'value': str(8080 + idx)
+                    }],
+                    'readinessProbe': {
+                        'httpGet': {
+                            'path': '/health',
+                            'port': 8080 + idx  # ポート番号を動的に設定
+                        },
+                        'initialDelaySeconds': 120,  # 初期遅延を延長
+                        'periodSeconds': 30,  # チェック間隔を延長
+                        'failureThreshold': 5,  # 失敗閾値を緩和
+                        'timeoutSeconds': 10  # タイムアウトを設定
+                    },
+                    'livenessProbe': {
+                        'httpGet': {
+                            'path': '/health',
+                            'port': 8080 + idx  # ポート番号を動的に設定
+                        },
+                        'initialDelaySeconds': 180,  # 初期遅延を延長
+                        'periodSeconds': 30,  # チェック間隔を延長
+                        'failureThreshold': 5,  # 失敗閾値を緩和
+                        'timeoutSeconds': 10  # タイムアウトを設定
+                    },
+                    'startupProbe': {
+                        'httpGet': {
+                            'path': '/',
+                            'port': 8080 + idx  # ポート番号を動的に設定
+                        },
+                        'failureThreshold': 30,  # 起動失敗閾値を大きく
+                        'periodSeconds': 10  # チェック間隔
                     }
                 }
-            })
-        
-        # 目標可用性から障害注入の確率を計算
-        target_availability = 0.9
-        # 各サービスの可用性を目標可用性に近づけるための障害注入確率を計算
-        # 例: 目標可用性が0.999の場合、0.001の確率で障害を注入
-        failure_probability = 1.0 - target_availability
-        
-        # フォールトインジェクターサイドカーを追加
-        # フォールトインジェクターサイドカーを追加
-        fault_injector = {
-            "name": "faultinjector",
-            "image": "busybox:latest",
-            "command": ["/bin/sh", "-c"],
-            "args": [
-                f"""
-                while true; do
-                    # {failure_probability * 100}%の確率で障害を注入
-                    if [ $(awk 'BEGIN{{print rand()}}') -lt {failure_probability} ]; then
-                        echo "Injecting fault..."
-                        for container in {' '.join(group_service_names)}; do
-                            pid=$(pgrep -f $container)
-                            if [ ! -z "$pid" ]; then
-                                echo "Killing process $pid for container $container"
-                                kill -TERM $pid
-                            fi
-                        done
-                    fi
-                    sleep 5
-                done
-                """
-            ],
-            "resources": {
-                "requests": {
-                    "cpu": "10m",
-                    "memory": "32Mi"
-                }
-            }
-        }
+                containers.append(container)
 
-        
-        containers.append(fault_injector)
-        
-        deployment_manifest = {
-            "apiVersion": "apps/v1",
-            "kind": "Deployment",
-            "metadata": {"name": deployment_name, "namespace": namespace},
-            "spec": {
-                "replicas": redundancy_list[idx] if idx < len(redundancy_list) else preferences.get('minReplicas', 1),
-                "selector": {"matchLabels": {"group": deployment_name}},
-                "template": {
-                    "metadata": {"labels": {"group": deployment_name}},
-                    "spec": {
-                        "shareProcessNamespace": True,  # プロセス名前空間の共有を有効化
-                        "containers": containers
+            # Initコンテナ定義 (依存関係解決用)
+            init_containers = []
+            if len(group['services']) > 1:
+                init_containers.append({
+                    'name': 'dependency-checker',
+                    'image': 'busybox:1.35',
+                    'command': ['sh', '-c', 
+                        'for svc in $DEPENDENCIES; do port=$((${svc#*-} + 8080)); until nslookup $svc && curl -s http://$svc:$port/ | grep -q "OK"; do echo waiting for $svc; sleep 5; done; done'],
+                    'env': [{
+                        'name': 'DEPENDENCIES',
+                        'value': ' '.join(group['services'])
+                    }],
+                    'resources': {
+                        'requests': {'cpu': '10m', 'memory': '16Mi'},
+                        'limits': {'cpu': '50m', 'memory': '32Mi'}
+                    }
+                })
+
+            # サービスごとに個別のDeploymentを作成
+            for service_name in group['services']:
+                deployment = {
+                    'apiVersion': 'apps/v1',
+                    'kind': 'Deployment',
+                    'metadata': {
+                        'name': f"{group['pod']}-{service_name}",
+                        'namespace': namespace,
+                        'labels': {
+                            'app': 'microservices-demo',
+                            'service': service_name
+                        }
                     },
+                'spec': {
+                    'replicas': group['redundancy'],
+                    'selector': {
+                        'matchLabels': {
+                            'app': 'microservices-demo',
+                            'group': group['pod']
+                        }
+                    },
+                    'template': {
+                        'metadata': {
+                            'labels': {
+                                'app': 'microservices-demo',
+                                'group': group['pod']
+                            }
+                        },
+                        'spec': {
+                            'initContainers': init_containers,
+                            'containers': containers,
+                            'restartPolicy': 'Always',
+                            'terminationGracePeriodSeconds': 60,  # 延長
+                            'dnsPolicy': 'ClusterFirst',
+                            'securityContext': {
+                                'runAsNonRoot': False,  # セキュリティ制限を緩和
+                                'runAsUser': 0,  # rootユーザーで実行
+                                'fsGroup': 0
+                            },
+                            'affinity': {
+                                'podAntiAffinity': {
+                                    'preferredDuringSchedulingIgnoredDuringExecution': [{
+                                        'weight': 100,
+                                        'podAffinityTerm': {
+                                            'labelSelector': {
+                                                'matchExpressions': [{
+                                                    'key': 'app',
+                                                    'operator': 'In',
+                                                    'values': ['microservices-demo']
+                                                }]
+                                            },
+                                            'topologyKey': 'kubernetes.io/hostname'
+                                        }
+                                    }]
+                                }
+                            }
+                        }
+                    },
+                    'strategy': {
+                        'type': 'RollingUpdate',
+                        'rollingUpdate': {
+                            'maxUnavailable': 0,  # 可用性向上
+                            'maxSurge': 1
+                        }
+                    }
                 }
             }
-        }
-        try:
-            api.patch_namespaced_deployment(deployment_name, namespace, deployment_manifest)
-            logger.info(f"Patched deployment {deployment_name} to replicas {redundancy_list[idx]}")
-        except kubernetes.client.rest.ApiException as e:
-            if e.status == 404:
-                api.create_namespaced_deployment(namespace, deployment_manifest)
-                logger.info(f"Created deployment {deployment_name} with replicas {redundancy_list[idx]}")
-            else:
-                logger.error(f"Failed to update deployment {deployment_name}: {e}")
 
-    result = {
-        "optimizationResult": {
-            "bestSolutionMatrix": best_solution_list,
-            "softwareCount": int(best_software_count),
-            "bestRUE": float(best_RUE),
-            "redundancy": [int(x) for x in redundancy_list],
-            "groups": [list(map(int, g)) for g in groups]
-        }
-    }
-    return result
+            # Deployment作成
+            api.create_namespaced_deployment(
+                namespace=namespace,
+                body=deployment
+            )
+            logger.info(f"Created deployment: {group['pod']}")
 
-# Kopf タイマー: 60秒ごとにCRDのspec.servicesのavailabilityをランダム更新
-@kopf.timer('myapp.example.com', 'v1alpha1', 'appconfigs', interval=300.0)
-def update_availability(spec, patch, logger, **kwargs):
-    services_spec = spec.get('services', [])
-    new_services = []
-    for s in services_spec:
-        s['availability'] = round(random.uniform(0.85, 0.9999), 4)
-        new_services.append(s)
-    patch.spec['services'] = new_services
-    logger.info(f"Updated availabilities: {[s['availability'] for s in new_services]}")
+        except Exception as e:
+            logger.error(f"Failed to create deployment {group['pod']}: {e}")
+            raise kopf.TemporaryError(f"Deployment creation failed: {e}", delay=60)
+
+    return {'message': 'Optimization completed', 'groups': final_group_details}
+
+
+
