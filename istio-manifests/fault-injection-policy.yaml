@@ -1,0 +1,17 @@
+apiVersion: security.istio.io/v1beta1
+kind: AuthorizationPolicy
+metadata:
+  name: allow-fault-injection
+  namespace: boutique
+spec:
+  selector:
+    matchLabels:
+      group: "group-*"
+  rules:
+  - from:
+    - source:
+        principals: ["cluster.local/ns/boutique/sa/default"]
+    to:
+    - operation:
+        methods: ["POST"]
+        paths: ["/inject-fault"]

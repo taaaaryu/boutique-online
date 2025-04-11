@@ -366,7 +366,7 @@ def optimize_appconfig(spec, meta, status, logger, **kwargs):
             })
         
         # 目標可用性から障害注入の確率を計算
-        target_availability = 0.9
+        target_availability = 1.0
         # 各サービスの可用性を目標可用性に近づけるための障害注入確率を計算
         # 例: 目標可用性が0.999の場合、0.001の確率で障害を注入
         failure_probability = 1.0 - target_availability
