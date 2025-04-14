@@ -342,12 +342,20 @@ def optimize_appconfig(spec, meta, status, logger, **kwargs):
     except Exception as e:
         logger.error(f"Error listing deployments: {e}")
 
-    # Deploymentの更新：各グループごとにDeploymentを作成またはパッチ
+    # DeploymentとServiceの更新：各グループごとにリソースを作成またはパッチ
     try:
         kubernetes.config.load_incluster_config()
     except kubernetes.config.config_exception.ConfigException:
         kubernetes.config.load_kube_config()
 
+    # サービス名とポートのマッピング
+    service_ports = {
+        "adservice": 9555,
+        "cartservice": 7070,
+        "emailservice": 8080,
+        "productcatalogservice": 3550,
+        "shippingservice": 50051
+    }
 
     for idx, group in enumerate(groups):
         deployment_name = f"group-{idx}"
@@ -365,46 +373,55 @@ def optimize_appconfig(spec, meta, status, logger, **kwargs):
                 }
             })
         
-        # 目標可用性から障害注入の確率を計算
-        target_availability = 1.0
-        # 各サービスの可用性を目標可用性に近づけるための障害注入確率を計算
-        # 例: 目標可用性が0.999の場合、0.001の確率で障害を注入
-        failure_probability = 1.0 - target_availability
         
-        # フォールトインジェクターサイドカーを追加
-        # フォールトインジェクターサイドカーを追加
-        fault_injector = {
-            "name": "faultinjector",
-            "image": "busybox:latest",
-            "command": ["/bin/sh", "-c"],
-            "args": [
-                f"""
-                while true; do
-                    # {failure_probability * 100}%の確率で障害を注入
-                    if [ $(awk 'BEGIN{{print rand()}}') -lt {failure_probability} ]; then
-                        echo "Injecting fault..."
-                        for container in {' '.join(group_service_names)}; do
-                            pid=$(pgrep -f $container)
-                            if [ ! -z "$pid" ]; then
-                                echo "Killing process $pid for container $container"
-                                kill -TERM $pid
-                            fi
-                        done
-                    fi
-                    sleep 5
-                done
-                """
-            ],
-            "resources": {
-                "requests": {
-                    "cpu": "10m",
-                    "memory": "32Mi"
+        # Serviceの作成
+        service_name = f"group-{idx}"
+        service_ports_list = []
+        for svc in group_service_names:
+            if svc in service_ports:
+                service_ports_list.append({
+                    "name": svc,
+                    "port": service_ports[svc],
+                    "targetPort": service_ports[svc]
+                })
+
+        service_manifest = {
+            "apiVersion": "v1",
+            "kind": "Service",
+            "metadata": {
+                "name": service_name,
+                "namespace": namespace,
+                "labels": {
+                    "group": service_name,
+                    "app": f"group-{idx}",
                 }
+            },
+            "spec": {
+                "type": "ClusterIP",
+                "selector": {"group": service_name},
+                "ports": service_ports_list
             }
         }
 
-        
-        containers.append(fault_injector)
+        # Serviceの作成/更新
+        core_api = kubernetes.client.CoreV1Api()
+        try:
+            core_api.patch_namespaced_service(service_name, namespace, service_manifest)
+            logger.info(f"Patched service {service_name}")
+        except kubernetes.client.rest.ApiException as e:
+            if e.status == 404:
+                core_api.create_namespaced_service(namespace, service_manifest)
+                logger.info(f"Created service {service_name}")
+            else:
+                logger.error(f"Failed to update service {service_name}: {e}")
+
+        # Deploymentの作成
+        # Group Podにはistio-injectionを無効化、それ以外は有効化
+        labels = {
+            "group": deployment_name, 
+            "app": f"group-{idx}",
+            "sidecar-injection": "enabled"  # Group Podもsidecar有効化
+        }
         
         deployment_manifest = {
             "apiVersion": "apps/v1",
@@ -412,9 +429,9 @@ def optimize_appconfig(spec, meta, status, logger, **kwargs):
             "metadata": {"name": deployment_name, "namespace": namespace},
             "spec": {
                 "replicas": redundancy_list[idx] if idx < len(redundancy_list) else preferences.get('minReplicas', 1),
-                "selector": {"matchLabels": {"group": deployment_name}},
+                "selector": {"matchLabels": {"group": deployment_name, "app": f"group-{idx}"}},
                 "template": {
-                    "metadata": {"labels": {"group": deployment_name}},
+                    "metadata": {"labels": labels},
                     "spec": {
                         "shareProcessNamespace": True,  # プロセス名前空間の共有を有効化
                         "containers": containers
@@ -431,6 +448,108 @@ def optimize_appconfig(spec, meta, status, logger, **kwargs):
                 logger.info(f"Created deployment {deployment_name} with replicas {redundancy_list[idx]}")
             else:
                 logger.error(f"Failed to update deployment {deployment_name}: {e}")
+
+    # Istioリソースの作成/更新
+    networking_api = kubernetes.client.CustomObjectsApi()
+    
+    # DestinationRuleの作成/更新
+    for idx, group in enumerate(groups):
+        service_name = f"group-{idx}"
+        dr_body = {
+            "apiVersion": "networking.istio.io/v1beta1",
+            "kind": "DestinationRule",
+            "metadata": {
+                "name": service_name,
+                "namespace": namespace
+            },
+            "spec": {
+                "host": f"{service_name}.{namespace}.svc.cluster.local",
+                "subsets": [
+                    {
+                        "name": "grouped",
+                        "labels": {"app": service_name}
+                    },
+                    {
+                        "name": "original",
+                        "labels": {"app": service_name.replace("group-", "")}
+                    }
+                ]
+            }
+        }
+        
+        try:
+            networking_api.patch_namespaced_custom_object(
+                group="networking.istio.io",
+                version="v1beta1",
+                plural="destinationrules",
+                name=service_name,
+                namespace=namespace,
+                body=dr_body
+            )
+        except kubernetes.client.rest.ApiException:
+            networking_api.create_namespaced_custom_object(
+                group="networking.istio.io",
+                version="v1beta1",
+                plural="destinationrules",
+                namespace=namespace,
+                body=dr_body
+            )
+
+    # VirtualServiceの作成/更新
+    vs_body = {
+        "apiVersion": "networking.istio.io/v1beta1",
+        "kind": "VirtualService",
+        "metadata": {
+            "name": "group-routing",
+            "namespace": namespace
+        },
+        "spec": {
+            "hosts": ["*"],
+            "gateways": ["boutique/frontend-gateway"],
+            "http": []
+        }
+    }
+
+    # 各サービスごとのルーティングルールを追加（冗長化数に比例したweight設定）
+    for idx, group in enumerate(groups):
+        original_service = group[0]
+        grouped_replicas = redundancy_list[idx] if idx < len(redundancy_list) else 1
+        total_replicas = grouped_replicas+1
+        weight_per_pod = int(100 / total_replicas) if total_replicas > 0 else 0
+        
+        routes = []
+        for i in range(total_replicas):
+            routes.append({
+                "destination": {
+                    "host": f"{original_service}.{namespace}.svc.cluster.local",
+                    "subset": "grouped"
+                },
+                "weight": weight_per_pod
+            })
+        
+        vs_body["spec"]["http"].append({
+            "match": [{"uri": {"prefix": f"/{original_service}"}}],
+            "route": routes
+        })
+        logger.info(routes)
+
+    try:
+        networking_api.patch_namespaced_custom_object(
+            group="networking.istio.io",
+            version="v1beta1",
+            plural="virtualservices",
+            name="group-routing",
+            namespace=namespace,
+            body=vs_body
+        )
+    except kubernetes.client.rest.ApiException:
+        networking_api.create_namespaced_custom_object(
+            group="networking.istio.io",
+            version="v1beta1",
+            plural="virtualservices",
+            namespace=namespace,
+            body=vs_body
+        )
 
     result = {
         "optimizationResult": {

@@ -16,12 +16,15 @@ apiVersion: networking.istio.io/v1alpha3
 kind: VirtualService
 metadata:
   name: frontend
+  namespace: boutique
 spec:
   hosts:
-  - "frontend.default.svc.cluster.local"
+  - "*"
+  gateways:
+  - boutique/frontend-gateway
   http:
   - route:
     - destination:
-        host: frontend
+        host: frontend.boutique.svc.cluster.local
         port:
           number: 80
