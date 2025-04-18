@@ -13,30 +13,30 @@ spec:
       requiredCPU: "50m"
       requiredMemory: "128Mi"
       availability: 0.99
-    #- name: checkoutservice
-     # requiredCPU: "50m"
-    # requiredMemory: "128Mi"
-    # availability: 0.99
-    #- name: currencyservice
-    #  requiredCPU: "50m"
-    #  requiredMemory: "128Mi"
-    #  availability: 0.99
+    - name: checkoutservice
+     requiredCPU: "50m"
+     requiredMemory: "128Mi"
+     availability: 0.99
+    - name: currencyservice
+      requiredCPU: "50m"
+      requiredMemory: "128Mi"
+      availability: 0.99
     - name: emailservice
       requiredCPU: "50m"
       requiredMemory: "128Mi"
       availability: 0.99
-    #- name: paymentservice
-    #  requiredCPU: "50m"
-    #  requiredMemory: "128Mi"
-    #  availability: 0.99
+    - name: paymentservice
+      requiredCPU: "50m"
+      requiredMemory: "128Mi"
+      availability: 0.99
     - name: productcatalogservice
       requiredCPU: "50m"
       requiredMemory: "128Mi"
       availability: 0.99
-    #- name: recommendationservice
-    #  requiredCPU: "50m"
-    #  requiredMemory: "128Mi"
-    #  availability: 0.99
+    - name: recommendationservice
+      requiredCPU: "50m"
+      requiredMemory: "128Mi"
+      availability: 0.99
     - name: shippingservice
       requiredCPU: "50m"
       requiredMemory: "128Mi"
@@ -53,6 +53,9 @@ spec:
     average: 10
     H: 100
     #targetAvailability: 0.999  # 目標可用性を99.9%に設定
+    # Fault Injection設定
+    faultProbability: 5  # 0-100の値で障害発生確率を指定
+    watchInterval: 10    # グループ監視間隔(秒)
 status:
   groups: []          # サービスグループ化の結果（オプション）
   optimizationResult: {}  # アルゴリズムの結果（例：最適なグループ構成、RUE値など）
