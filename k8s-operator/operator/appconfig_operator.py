@@ -1,5 +1,6 @@
 import kopf
 from kubernetes import client, config
+from kubernetes.stream import stream
 import kubernetes
 import numpy as np
 import random
@@ -13,6 +14,9 @@ from itertools import combinations, chain
 GENERATION = 10
 NUM_NEXT = 10
 all_deployments = ["adservice", "cartservice", "checkoutservice", "currencyservice", "emailservice", "paymentservice", "productcatalogservice", "recommendationservice", "shippingservice"]
+NAMESPACE = "boutique"
+KILL_PROBABILITY = 0.3  # 各サービスがkillされる確率
+
 
 
 def calc_software_av(services_group, service_avail, services):
@@ -263,6 +267,7 @@ def optimize_appconfig(spec, meta, status, logger, **kwargs):
     namespace = meta.get('namespace', 'boutique')
     services_spec = spec.get('services', [])
     preferences = spec.get('preferences', {})
+    global service_groups
 
     # CRDから定数を読み取る
     r_adds = preferences.get('rAdds', [0.8, 1, 1.2])
@@ -320,6 +325,7 @@ def optimize_appconfig(spec, meta, status, logger, **kwargs):
     all_redundancy_list = [int(r) for r in all_redundancy_list]
 
     logger.info(f"Optimization result (grouping): best solution matrix: {best_solution_list}, software count: {best_software_count}, RUE: {best_RUE}")
+    service_groups = best_solution_list
     config.load_kube_config()  # または load_kube_config()
  
     # 各deploymentに対してreplicasを更新
@@ -339,7 +345,7 @@ def optimize_appconfig(spec, meta, status, logger, **kwargs):
     
 
 # Kopf タイマー: 60秒ごとにCRDのspec.servicesのavailabilityをランダム更新
-@kopf.timer('myapp.example.com', 'v1alpha1', 'AppConfig', interval=300.0)
+@kopf.timer('myapp.example.com', 'v1alpha1', 'AppConfig', interval=100.0)
 def update_availability(spec, patch, logger, **kwargs):
     services_spec = spec.get('services', [])
     new_services = []
@@ -348,3 +354,72 @@ def update_availability(spec, patch, logger, **kwargs):
         new_services.append(s)
     patch.spec['services'] = new_services
     logger.info(f"Updated availabilities: {[s['availability'] for s in new_services]}")
+
+@kopf.timer('myapp.example.com', 'v1alpha1', 'AppConfig', interval=10.0)
+def kill_sidecar_timer(spec, logger, **kwargs):
+    global service_groups
+
+    try:
+        config.load_incluster_config()
+    except:
+        config.load_kube_config()
+
+    v1 = client.CoreV1Api()
+    pods = v1.list_namespaced_pod(namespace=NAMESPACE).items
+
+    # Pod名 -> Deployment名 の対応表
+    pod_deployments = {pod.metadata.name: get_deployment_name(pod) for pod in pods}
+
+    already_killed_groups = set()
+
+    for service_idx, deployment in enumerate(all_deployments):
+        if random.random() >= KILL_PROBABILITY:
+            continue
+
+        # deploymentに対応するPodを取得
+        service_pods = [pod for pod in pods if get_deployment_name(pod) == deployment]
+        if not service_pods:
+            continue
+
+        # 所属グループを特定
+        group_id = get_group_id(service_idx, service_groups)
+        if group_id == -1 or group_id in already_killed_groups:
+            continue
+
+        # このサービスのPodから1つkill
+        victim = random.choice(service_pods)
+        try:
+            v1.delete_namespaced_pod(victim.metadata.name, NAMESPACE)
+            logger.info(f"Killed pod: {victim.metadata.name} from deployment {deployment}")
+        except Exception as e:
+            logger.error(f"Error killing pod {victim.metadata.name}: {e}")
+        # 同じグループ内の他サービスからも1つずつkill（このサービスは除く）
+        for other_service_idx, val in enumerate(service_groups[group_id]):
+            if other_service_idx == service_idx or val != 1:
+                continue
+            dep_name = all_deployments[other_service_idx]
+            sibling_pods = [pod for pod in pods if get_deployment_name(pod) == dep_name]
+            if sibling_pods:
+                sib_victim = random.choice(sibling_pods)
+                try:
+                    v1.delete_namespaced_pod(sib_victim.metadata.name, NAMESPACE)
+                    logger.info(f"Also killed pod: {sib_victim.metadata.name} from deployment {dep_name} in group {group_id}")
+                except Exception as e:
+                    logger.error(f"Error killing sibling pod {sib_victim.metadata.name}: {e}")
+
+        already_killed_groups.add(group_id)
+
+# ---- Helper: PodからDeployment名を取得 ----
+def get_deployment_name(pod):
+    for owner in pod.metadata.owner_references or []:
+        if owner.kind == "ReplicaSet":
+            return owner.name.rsplit("-", 1)[0]
+    return None
+
+# ---- Helper: サービスindexから所属グループのIDを返す ----
+def get_group_id(service_index, service_groups):
+    print(f"service_index: {service_index}")
+    for idx, group in enumerate(service_groups):
+        if group[service_index] == 1:
+            return idx
+    return -1
