@@ -17,6 +17,8 @@ spec:
       availability: 0.99
     - name: paymentservice
       availability: 0.99
+    - name: frontend
+      availability: 0.99
     - name: productcatalogservice
       availability: 0.99
     - name: recommendationservice
