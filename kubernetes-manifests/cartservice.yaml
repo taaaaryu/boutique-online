@@ -19,6 +19,7 @@ metadata:
   labels:
     app: cartservice
 spec:
+  replicas: 3
   selector:
     matchLabels:
       app: cartservice

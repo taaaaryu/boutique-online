@@ -1,33 +1,32 @@
 import http from 'k6/http';
 import { check, sleep } from 'k6';
 
-// k6 のオプション設定：仮想ユーザ数 (VUs) とテスト期間
+// 仮想ユーザ数 (VUs) とテスト期間
 export let options = {
   vus: Number(__ENV.VUS) || 1000,
-  duration: __ENV.DURATION || '5m',
+  duration: __ENV.DURATION || '60m',
 };
 
-// Ingress Gateway のホストとポート（ポートフォワーディングの場合は localhost と指定）
-const ingressHost = __ENV.INGRESS_HOST || 'localhost';
-// ポートは5080に変更
-const ingressPort = __ENV.INGRESS_PORT || '80';
+// Node の IP と NodePort。必要に応じて ENV で上書き
+const ingressHost = __ENV.INGRESS_HOST || '172.18.0.2';
+const ingressPort = __ENV.INGRESS_PORT || '32722';
 
-// VirtualService の hosts に合わせたターゲットホスト名
+// VirtualService で定義したホスト名（Host ヘッダーに指定）
 const targetHost = __ENV.TARGET_HOST || 'frontend.example.com';
 
-// Ingress Gateway 経由の URL を作成（HTTP の場合）
+// 実際に叩く URL
 const url = `http://${ingressHost}:${ingressPort}/`;
 
 export default function () {
-  // Istio のルーティングに合わせ、Host ヘッダーを指定
+  // Istio のルールに合わせて Host ヘッダーを付与
+  const headers = { Host: targetHost };
 
-  const headers = { 'Host': targetHost };
-
+  // GET リクエスト
   let res = http.get(url, { headers });
+
   check(res, {
     'status is 200': (r) => r.status === 200,
   });
+
   sleep(1);
 }
-
-

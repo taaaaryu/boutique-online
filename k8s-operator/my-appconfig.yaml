@@ -6,45 +6,26 @@ metadata:
 spec:
   services:
     - name: adservice
-      requiredCPU: "50m"
-      requiredMemory: "180Mi"
       availability: 0.99
     - name: cartservice
-      requiredCPU: "50m"
-      requiredMemory: "128Mi"
       availability: 0.99
-    #- name: checkoutservice
-     # requiredCPU: "50m"
-    # requiredMemory: "128Mi"
-    # availability: 0.99
-    #- name: currencyservice
-    #  requiredCPU: "50m"
-    #  requiredMemory: "128Mi"
-    #  availability: 0.99
+    - name: checkoutservice
+      availability: 0.99
+    - name: currencyservice
+      availability: 0.99
     - name: emailservice
-      requiredCPU: "50m"
-      requiredMemory: "128Mi"
       availability: 0.99
-    #- name: paymentservice
-    #  requiredCPU: "50m"
-    #  requiredMemory: "128Mi"
-    #  availability: 0.99
+    - name: paymentservice
+      availability: 0.99
+    - name: frontend
+      availability: 0.99
     - name: productcatalogservice
-      requiredCPU: "50m"
-      requiredMemory: "128Mi"
       availability: 0.99
-    #- name: recommendationservice
-    #  requiredCPU: "50m"
-    #  requiredMemory: "128Mi"
-    #  availability: 0.99
+    - name: recommendationservice
+      availability: 0.99
     - name: shippingservice
-      requiredCPU: "50m"
-      requiredMemory: "128Mi"
       availability: 0.99
   preferences:
-    minReplicas: 1
-    maxReplicas: 4
-    resourceLimit: "2n"
     # 以下はアルゴリズム用の追加定数
     rAdds: [0.8, 1, 1.2]
     generation: 10
@@ -53,6 +34,9 @@ spec:
     average: 10
     H: 100
     #targetAvailability: 0.999  # 目標可用性を99.9%に設定
+    # Fault Injection設定
+    #aultProbability: 5  # 0-100の値で障害発生確率を指定
+    #atchInterval: 10    # グループ監視間隔(秒)
 status:
   groups: []          # サービスグループ化の結果（オプション）
   optimizationResult: {}  # アルゴリズムの結果（例：最適なグループ構成、RUE値など）
