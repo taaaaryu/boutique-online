@@ -34,6 +34,9 @@ kill_interval = 40
 pause_interval = 1.5*kill_interval
 log_interval = 20
 PROGRAM_START_TIME = datetime.now()
+# pause_intervalごとにファイルを分ける
+CSV_TIMESTAMP = datetime.now().strftime('%Y%m%d-%H%M%S')
+csv_filename = f"pod_status-{pause_interval}-{CSV_TIMESTAMP}.csv"
 # ---------------------------
 
 
@@ -287,7 +290,7 @@ def init_pod_status(spec, logger, **kwargs):
 @kopf.on.create('myapp.example.com', 'v1alpha1', 'AppConfig')
 @kopf.timer('myapp.example.com', 'v1alpha1', 'AppConfig', interval=algo_interval)
 def optimize_appconfig(spec, meta, status, logger, **kwargs):
-    global service_groups, pause_counts
+    global service_groups, pause_counts, csv_filename
 
     namespace = meta.get('namespace', 'boutique')
     preferences = spec.get('preferences', {})
@@ -300,12 +303,10 @@ def optimize_appconfig(spec, meta, status, logger, **kwargs):
     num_services = len(all_deployments) - 1
     H = (num_services + 1) * 3
 
-    csv_filename = "pod_status.csv"
-
     if not os.path.exists(csv_filename):
         # CSVが存在しない = 初回実行
         service_avail = [0.99] * len(all_deployments)
-        logger.warning("pod_status.csv not found. Using default 0.99 availability.")
+        logger.warning(f"{csv_filename} not found. Using default 0.99 availability.")
     else:
         df = pd.read_csv(csv_filename, parse_dates=["timestamp"])
 
@@ -374,7 +375,7 @@ def optimize_appconfig(spec, meta, status, logger, **kwargs):
             logger.info(f"Updated deployment: {deployment} with replicas: {replicas}")
         except kubernetes.client.exceptions.ApiException as e:
             logger.error(f"Failed to update deployment {deployment}: {e}")
-    if os.path.exists(csv_filename := "pod_status.csv"):
+    if os.path.exists(csv_filename := f"pod_status-{CSV_TIMESTAMP}.csv"):
         df = pd.read_csv(csv_filename)
         if not df.empty:
             df.loc[df.index[-1], "optimize_flag"] = 1
@@ -478,7 +479,7 @@ def get_group_id(service_index):
 
 @kopf.timer('myapp.example.com', 'v1alpha1', 'AppConfig', interval=log_interval)
 def log_pod_status(spec, **kwargs):
-    global paused_pods
+    global paused_pods, csv_filename
     now = datetime.now()
     now_iso = now.isoformat()
     if datetime.now() - PROGRAM_START_TIME > timedelta(hours=10):
@@ -523,7 +524,6 @@ def log_pod_status(spec, **kwargs):
         unknown = max(total_expected - (running_now + paused_now), 0)
         status_counts[dep]["running"] += unknown
 
-    csv_filename = f"rep_pod_status-{pause_interval}.csv"
     if not os.path.exists(csv_filename):
         with open(csv_filename, 'w', newline='') as f:
             writer = csv.writer(f)
@@ -539,6 +539,6 @@ def log_pod_status(spec, **kwargs):
         for dep in all_deployments:
             running = status_counts[dep]["running"]
             paused = status_counts[dep]["paused"]
-            row += [running, paused]  # ← ここが重要！
-        row += [0, 0]  # optimize_flag=0, pause_flag=0
+            row += [running, paused]
+        row += [0, 0]
         writer.writerow(row)
