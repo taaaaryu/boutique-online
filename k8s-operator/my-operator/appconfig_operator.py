@@ -350,8 +350,8 @@ def optimize_appconfig(spec, meta, status, logger, **kwargs):
     num_services = len(all_deployments) - 1
     H = (num_services + 1) * 3
 
-    csv_filename = "pod_status.csv"
-
+    csv_filename = f"pod_status-{pause_interval}.csv"
+    
     if not os.path.exists(csv_filename):
         # CSVが存在しない = 初回実行
         service_avail = [0.99] * len(all_deployments)
