@@ -101,33 +101,12 @@ func main() {
 	}
 	log.Out = os.Stdout
 
-	svc := new(frontendServer)
-
-	otel.SetTextMapPropagator(
-		propagation.NewCompositeTextMapPropagator(
-			propagation.TraceContext{}, propagation.Baggage{}))
-
-	baseUrl = os.Getenv("BASE_URL")
-
-	if os.Getenv("ENABLE_TRACING") == "1" {
-		log.Info("Tracing enabled.")
-		initTracing(log, ctx, svc)
-	} else {
-		log.Info("Tracing disabled.")
-	}
-
-	if os.Getenv("ENABLE_PROFILER") == "1" {
-		log.Info("Profiling enabled.")
-		go initProfiling(log, "frontend", "1.0.0")
-	} else {
-		log.Info("Profiling disabled.")
-	}
-
 	srvPort := port
 	if os.Getenv("PORT") != "" {
 		srvPort = os.Getenv("PORT")
 	}
 	addr := os.Getenv("LISTEN_ADDR")
+	svc := new(frontendServer)
 	mustMapEnv(&svc.productCatalogSvcAddr, "PRODUCT_CATALOG_SERVICE_ADDR")
 	mustMapEnv(&svc.currencySvcAddr, "CURRENCY_SERVICE_ADDR")
 	mustMapEnv(&svc.cartSvcAddr, "CART_SERVICE_ADDR")

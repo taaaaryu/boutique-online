@@ -1,22 +1,32 @@
 import http from 'k6/http';
 import { check, sleep } from 'k6';
 
-// 負荷のシナリオ設定例（VU数と時間を調整できます）
+// 仮想ユーザ数 (VUs) とテスト期間
 export let options = {
-  stages: [
-    { duration: '30s', target: 50 }, // 30秒間で50VUに増加
-    { duration: '1m', target: 50 },  // 1分間50VUで負荷維持
-    { duration: '30s', target: 0 }   // 30秒間で0VUに減少
-  ],
+  vus: Number(__ENV.VUS) || 1000,
+  duration: __ENV.DURATION || '5m',
 };
 
+// Node の IP と NodePort。必要に応じて ENV で上書き
+const ingressHost = __ENV.INGRESS_HOST || '172.18.0.2';
+const ingressPort = __ENV.INGRESS_PORT || '32410';
+
+// VirtualService で定義したホスト名（Host ヘッダーに指定）
+const targetHost = __ENV.TARGET_HOST || 'frontend.example.com';
+
+// 実際に叩く URL
+const url = `http://${ingressHost}:${ingressPort}/`;
+
 export default function () {
-  // クラスター内で k6 を実行する場合は、サービス名を利用してリクエスト可能
-  // ※ 外部からアクセスする場合は、ノードIPとNodePort(31083)を利用するか、外部IPが割り当てられているか確認してください。
-  let res = http.get('http://frontend-external.boutique.svc.cluster.local/');
+  // Istio のルールに合わせて Host ヘッダーを付与
+  const headers = { Host: targetHost };
+
+  // GET リクエスト
+  let res = http.get(url, { headers });
+
   check(res, {
     'status is 200': (r) => r.status === 200,
   });
-  sleep(1); // 次のリクエストまで1秒待機（調整可）
-}
 
+  sleep(1);
+}
