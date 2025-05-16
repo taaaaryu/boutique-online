@@ -20,9 +20,9 @@ from datetime import datetime, timedelta
 # ---------------------------
 GENERATION = 10
 NUM_NEXT = 10
-all_deployments = ["adservice", "cartservice", "checkoutservice", "currencyservice", "emailservice", "paymentservice","productcatalogservice", "recommendationservice", "shippingservice"]
+all_deployments = ["adservice", "cartservice", "checkoutservice", "currencyservice", "emailservice", "paymentservice","frontend","productcatalogservice", "recommendationservice", "shippingservice"]
 NAMESPACE = "boutique"
-KILL_PROBABILITY = 0  # 各サービスがkillされる確率
+KILL_PROBABILITY = 0.05  # 各サービスがkillされる確率
 paused_pods = {}
 service_groups = []  # グローバルなサービスグループ
 pause_counts = {dep: 0 for dep in all_deployments}  # グローバルなpause回数辞書
@@ -31,13 +31,12 @@ rm_records = {dep: [] for dep in all_deployments}
 r_add=1.05
 algo_interval = 120
 kill_interval = 40
-pause_interval = 40*kill_interval
+pause_interval = 80*kill_interval
 log_interval = 20
 PROGRAM_START_TIME = datetime.now()
 # pause_intervalごとにファイルを分ける
 CSV_TIMESTAMP = datetime.now().strftime('%Y%m%d-%H%M%S')
 csv_filename = f"pod_status-{pause_interval}-{CSV_TIMESTAMP}.csv"
-REPLICA=3
 # ---------------------------
 
 
@@ -302,7 +301,7 @@ def optimize_appconfig(spec, meta, status, logger, **kwargs):
     server_avail = 0.95
     service_resource = 1
     num_services = len(all_deployments) - 1
-    H = (num_services + 1) * REPLICA
+    H = (num_services + 1) * 1
 
     if not os.path.exists(csv_filename):
         # CSVが存在しない = 初回実行
@@ -403,8 +402,8 @@ def scale_deployment(v1_apps, deployment_name, namespace, duration, logger):
         # 1) 現在の replicas を取得
         dep = v1_apps.read_namespaced_deployment(deployment_name, namespace)
         original = dep.spec.replicas or 0
-        if original == 0:
-            logger.warning(f"{deployment_name} の replicas が 0 なのでスケールダウンをスキップ")
+        if original <= 1:
+            logger.warning(f"{deployment_name} の replicas が 1 以下なのでスケールダウンをスキップ")
             return
 
         # 2) スケールダウン

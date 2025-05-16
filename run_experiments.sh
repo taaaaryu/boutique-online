@@ -1,8 +1,8 @@
 #!/bin/bash
 
 # 設定値
-K=3  # 各pause_intervalでの測定回数
-PAUSE_INTERVALS=(40 60 80)  # テストするpause_intervalの値
+K=1  # 各pause_intervalでの測定回数
+PAUSE_INTERVALS=(40 60)  # テストするpause_intervalの値
 OUTPUT_DIR="experiment_results"
 K6_OUTPUT_DIR="${OUTPUT_DIR}/k6_results"
 CSV_OUTPUT_DIR="${OUTPUT_DIR}/csv_results"
