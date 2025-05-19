@@ -22,7 +22,7 @@ GENERATION = 10
 NUM_NEXT = 10
 all_deployments = ["adservice", "cartservice", "checkoutservice", "currencyservice", "emailservice", "paymentservice","productcatalogservice", "recommendationservice", "shippingservice"]
 NAMESPACE = "boutique"
-KILL_PROBABILITY = 0  # 各サービスがkillされる確率
+KILL_PROBABILITY = 0.05  # 各サービスがkillされる確率
 paused_pods = {}
 service_groups = []  # グローバルなサービスグループ
 pause_counts = {dep: 0 for dep in all_deployments}  # グローバルなpause回数辞書
@@ -34,7 +34,7 @@ kill_interval = 40
 pause_interval = 40*kill_interval
 log_interval = 20
 PROGRAM_START_TIME = datetime.now()
-# pause_intervalごとにファイルを分ける
+# pause_intervalごとにファイルを分けるjp:
 CSV_TIMESTAMP = datetime.now().strftime('%Y%m%d-%H%M%S')
 csv_filename = f"pod_status-{pause_interval}-{CSV_TIMESTAMP}.csv"
 REPLICA=3
