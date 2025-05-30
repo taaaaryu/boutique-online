@@ -1,0 +1,39 @@
+Method,Name,Error,Occurrences
+GET,/product/LS4PSXUNUM,HTTPParseError('Incomplete response.'),3
+GET,/product/2ZYFJ3GM2N,"ConnectionRefusedError(111, 'Connection refused')",3
+GET,/product/0PUK6V6EV0,"ConnectionRefusedError(111, 'Connection refused')",1
+GET,/product/66VCHSJNUP,"BadStatusCode('http://172.18.0.2:31036/product/66VCHSJNUP', code=503)",14
+GET,/product/1YMWWN1N4O,"ConnectionRefusedError(111, 'Connection refused')",1
+GET,/product/9SIQT8TOJO,"BadStatusCode('http://172.18.0.2:31036/product/9SIQT8TOJO', code=503)",18
+GET,/product/OLJCESPC7Z,"ConnectionRefusedError(111, 'Connection refused')",1
+GET,/product/L9ECAV7KIM,HTTPParseError('Incomplete response.'),1
+POST,/cart,"ConnectionRefusedError(111, 'Connection refused')",1
+GET,/,"ConnectionRefusedError(111, 'Connection refused')",2
+GET,/product/2ZYFJ3GM2N,"BadStatusCode('http://172.18.0.2:31036/product/2ZYFJ3GM2N', code=503)",13
+POST,/cart,HTTPParseError('Incomplete response.'),4
+GET,/cart,HTTPParseError('Incomplete response.'),10
+POST,/setCurrency,"BadStatusCode('http://172.18.0.2:31036/setCurrency', code=503)",14
+GET,/product/66VCHSJNUP,"ConnectionRefusedError(111, 'Connection refused')",1
+POST,/cart,"BadStatusCode('http://172.18.0.2:31036/cart', code=503)",63
+GET,/,"BadStatusCode('http://172.18.0.2:31036/', code=503)",18
+GET,/cart,"ConnectionRefusedError(111, 'Connection refused')",2
+GET,/product/2ZYFJ3GM2N,HTTPParseError('Incomplete response.'),1
+GET,/product/9SIQT8TOJO,HTTPParseError('Incomplete response.'),1
+POST,/cart/checkout,"BadStatusCode('http://172.18.0.2:31036/cart/checkout', code=503)",42
+POST,/cart/checkout,"BadStatusCode('http://172.18.0.2:31036/cart/checkout', code=500)",4
+GET,/,HTTPParseError('Incomplete response.'),1
+GET,/product/6E92ZMYYFZ,"BadStatusCode('http://172.18.0.2:31036/product/6E92ZMYYFZ', code=503)",14
+POST,/cart/checkout,HTTPParseError('Incomplete response.'),3
+GET,/cart,"BadStatusCode('http://172.18.0.2:31036/cart', code=503)",22
+GET,/product/LS4PSXUNUM,"BadStatusCode('http://172.18.0.2:31036/product/LS4PSXUNUM', code=503)",16
+GET,/product/OLJCESPC7Z,"BadStatusCode('http://172.18.0.2:31036/product/OLJCESPC7Z', code=503)",21
+GET,/product/9SIQT8TOJO,"ConnectionRefusedError(111, 'Connection refused')",1
+GET,/product/1YMWWN1N4O,"BadStatusCode('http://172.18.0.2:31036/product/1YMWWN1N4O', code=503)",10
+GET,/product/1YMWWN1N4O,HTTPParseError('Incomplete response.'),3
+GET,/product/0PUK6V6EV0,HTTPParseError('Incomplete response.'),4
+GET,/product/0PUK6V6EV0,"BadStatusCode('http://172.18.0.2:31036/product/0PUK6V6EV0', code=503)",15
+POST,/setCurrency,HTTPParseError('Incomplete response.'),7
+GET,/product/L9ECAV7KIM,"ConnectionRefusedError(111, 'Connection refused')",3
+POST,/setCurrency,"BadStatusCode('http://172.18.0.2:31036/', code=503)",21
+GET,/product/66VCHSJNUP,HTTPParseError('Incomplete response.'),1
+GET,/product/L9ECAV7KIM,"BadStatusCode('http://172.18.0.2:31036/product/L9ECAV7KIM', code=503)",18

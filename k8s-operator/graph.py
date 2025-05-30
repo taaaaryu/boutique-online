@@ -3,7 +3,7 @@ import matplotlib.pyplot as plt
 import os
 
 # CSV読み込みと前処理
-df = pd.read_csv("k8s-operator/rep_pod_status-20.0.csv", parse_dates=['timestamp']).set_index('timestamp')
+df = pd.read_csv("k8s-operator/pod_status-20250530-135855.csv", parse_dates=['timestamp']).set_index('timestamp')
 running_cols = [c for c in df.columns if c.endswith('_running')]
 
 # 出力先ディレクトリ作成

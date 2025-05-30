@@ -79,8 +79,14 @@ def checkout(l):
         'credit_card_cvv': f"{random.randint(100, 999)}",
     })
     
+def all_pod(l):
+    l.client.get("/")
+    browseProduct(l)
+    setCurrency(l)
+    checkout(l)
+
 def logout(l):
-    l.client.get('/logout')  
+    l.client.get('/logout')
 
 
 class UserBehavior(TaskSet):
@@ -88,12 +94,10 @@ class UserBehavior(TaskSet):
     def on_start(self):
         index(self)
 
-    tasks = {index: 200,
-        setCurrency: 400,
-        browseProduct: 300,
-        addToCart: 300,
-        viewCart: 200,
-        checkout: 100}
+    tasks = {index: 1,
+        setCurrency: 1,
+        browseProduct: 1,
+        checkout: 1}
 
 class WebsiteUser(FastHttpUser):
     tasks = [UserBehavior]

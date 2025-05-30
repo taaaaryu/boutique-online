@@ -22,13 +22,12 @@ GENERATION = 10
 NUM_NEXT = 10
 all_deployments = ["adservice", "cartservice", "checkoutservice", "currencyservice", "emailservice", "paymentservice","productcatalogservice", "recommendationservice", "shippingservice"]
 NAMESPACE = "boutique"
-KILL_PROBABILITY = 0.05  # 各サービスがkillされる確率
 paused_pods = {}
 service_groups = []  # グローバルなサービスグループ
 pause_counts = {dep: 0 for dep in all_deployments}  # グローバルなpause回数辞書
 # RM（Resilience Margin）サンプルを蓄積
 rm_records = {dep: [] for dep in all_deployments}
-r_add=1.05
+r_add=1.01
 algo_interval = 120
 kill_interval = 40
 pause_interval = 40*kill_interval
@@ -38,6 +37,8 @@ PROGRAM_START_TIME = datetime.now()
 CSV_TIMESTAMP = datetime.now().strftime('%Y%m%d-%H%M%S')
 csv_filename = f"pod_status-{pause_interval}-{CSV_TIMESTAMP}.csv"
 REPLICA=3
+# グローバル変数として追加
+current_service_avail = [0.99] * len(all_deployments)  # デフォルト値
 # ---------------------------
 
 
@@ -291,22 +292,22 @@ def init_pod_status(spec, logger, **kwargs):
 @kopf.on.create('myapp.example.com', 'v1alpha1', 'AppConfig')
 @kopf.timer('myapp.example.com', 'v1alpha1', 'AppConfig', interval=algo_interval)
 def optimize_appconfig(spec, meta, status, logger, **kwargs):
-    global service_groups, pause_counts, csv_filename
+    global service_groups, pause_counts, csv_filename, current_service_avail
 
     namespace = meta.get('namespace', 'boutique')
     preferences = spec.get('preferences', {})
     generation = int(preferences.get('generation', GENERATION))
     NUM_START = int(preferences.get('numStart', 50))
-    max_redundancy = int(preferences.get('maxReplicas', 3))
+    max_redundancy = int(preferences.get('maxReplicas', REPLICA))
 
-    server_avail = 0.95
+    server_avail = 0.99
     service_resource = 1
     num_services = len(all_deployments) - 1
-    H = (num_services + 1) * REPLICA
+    H = (num_services + 1) * REPLICA * 0.5
 
     if not os.path.exists(csv_filename):
         # CSVが存在しない = 初回実行
-        service_avail = [0.99] * len(all_deployments)
+        current_service_avail = [0.99] * len(all_deployments)
         logger.warning(f"{csv_filename} not found. Using default 0.99 availability.")
     else:
         df = pd.read_csv(csv_filename, parse_dates=["timestamp"])
@@ -320,7 +321,7 @@ def optimize_appconfig(spec, meta, status, logger, **kwargs):
         else:
             df_filtered = df
 
-        service_avail = []
+        current_service_avail = []
         for dep in all_deployments:
             run_col = f"{dep}_running"
             pause_col = f"{dep}_paused"
@@ -330,13 +331,13 @@ def optimize_appconfig(spec, meta, status, logger, **kwargs):
             total = total_running + total_paused
 
             avail = total_running / total if total > 0 else 1.0
-            service_avail.append(avail)
+            current_service_avail.append(avail)
 
-        logger.info(f"Calculated service availabilities: {service_avail}")
+        logger.info(f"Calculated service availabilities: {current_service_avail}")
 
     pause_counts = {dep: 0 for dep in all_deployments}
 
-    best_matrices, best_counts, best_RUEs = multi_start_greedy(r_add, service_avail, server_avail, H, num_services, NUM_START)
+    best_matrices, best_counts, best_RUEs = multi_start_greedy(r_add, current_service_avail, server_avail, H, num_services, NUM_START)
     best_solution = best_matrices[0]
     best_solution_list = best_solution.tolist() if isinstance(best_solution, np.ndarray) else best_solution
     best_software_count = int(best_counts[0])
@@ -349,7 +350,7 @@ def optimize_appconfig(spec, meta, status, logger, **kwargs):
     size_end = 0
     for size in group_sizes:
         size_end += size
-        prod = np.prod(service_avail[size_start:size_end])
+        prod = np.prod(current_service_avail[size_start:size_end])
         group_avail.append(prod * server_avail)
         size_start += size
     sw_resource = [size * service_resource for size in group_sizes]
@@ -430,7 +431,7 @@ def scale_deployment(v1_apps, deployment_name, namespace, duration, logger):
 
 @kopf.timer('myapp.example.com', 'v1alpha1', 'AppConfig', interval=kill_interval)
 def kill_sidecar_timer(spec, logger, **kwargs):
-    global service_groups, pause_counts
+    global service_groups, pause_counts, current_service_avail
 
     if not service_groups:
         logger.warning("service_groups not yet initialized. Skipping this round.")
@@ -445,7 +446,8 @@ def kill_sidecar_timer(spec, logger, **kwargs):
     apps_v1 = client.AppsV1Api()
 
     for svc_idx, deployment in enumerate(all_deployments):
-        if random.random() >= KILL_PROBABILITY:
+        # optimize_appconfigで計算したサービス可用性を使用
+        if random.random() >= current_service_avail[svc_idx]:
             continue
 
         # 所属グループが既に処理済みならスキップ

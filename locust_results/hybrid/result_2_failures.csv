@@ -1,0 +1,4 @@
+Method,Name,Error,Occurrences
+POST,/cart/checkout,"BadStatusCode('http://172.18.0.2:31036/cart/checkout', code=500)",2
+GET,/product/LS4PSXUNUM,"BadStatusCode('http://172.18.0.2:31036/product/LS4PSXUNUM', code=500)",1
+GET,/cart,"BadStatusCode('http://172.18.0.2:31036/cart', code=500)",1
