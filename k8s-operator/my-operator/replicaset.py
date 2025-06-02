@@ -303,7 +303,7 @@ def optimize_appconfig(spec, meta, status, logger, **kwargs):
     server_avail = 0.99
     service_resource = 1
     num_services = len(all_deployments) - 1
-    H = (num_services + 1) * REPLICA * 0.5
+    H = (num_services + 1) * REPLICA
 
     if not os.path.exists(csv_filename):
         # CSVが存在しない = 初回実行
@@ -444,8 +444,15 @@ def kill_sidecar_timer(spec, logger, **kwargs):
         config.load_kube_config()
 
     apps_v1 = client.AppsV1Api()
+    
+    # 各サービスが1回の実行で最大1つだけスケールダウンするように制御
+    processed_services = set()
 
     for svc_idx, deployment in enumerate(all_deployments):
+        # 既に処理済みのサービスはスキップ
+        if deployment in processed_services:
+            continue
+
         # optimize_appconfigで計算したサービス可用性を使用
         if random.random() >= current_service_avail[svc_idx]:
             continue
@@ -461,17 +468,22 @@ def kill_sidecar_timer(spec, logger, **kwargs):
             args=(apps_v1, deployment, NAMESPACE, pause_interval, logger),
         ).start()
         logger.info(f"Triggered scale-down for deployment: {deployment}")
+        processed_services.add(deployment)
 
         # 同じグループに属する他のサービスも１つずつダウンさせる
         for other_idx, belongs in enumerate(service_groups[grp]):
             if belongs != 1 or other_idx == svc_idx:
                 continue
             dep2 = all_deployments[other_idx]
+            # 既に処理済みのサービスはスキップ
+            if dep2 in processed_services:
+                continue
             threading.Thread(
                 target=scale_deployment,
                 args=(apps_v1, dep2, NAMESPACE, pause_interval, logger),
             ).start()
             logger.info(f"Triggered scale-down for sibling deployment: {dep2}")
+            processed_services.add(dep2)
 
 
 def get_group_id(service_index):

@@ -15,12 +15,9 @@
 # limitations under the License.
 
 import random
-from locust import FastHttpUser, TaskSet, between, events
+from locust import FastHttpUser, TaskSet, between
 from faker import Faker
 import datetime
-import json
-import time
-
 fake = Faker()
 
 products = [
@@ -58,11 +55,6 @@ def addToCart(l):
 def empty_cart(l):
     l.client.post('/cart/empty')
 
-@events.request.add_listener
-def on_request(request_type, name, response_time, response_length, response, **kwargs):
-    if response.status_code >= 400:
-        print(f"Request failed: {name} - Status: {response.status_code}")
-
 def checkout(l):
     addToCart(l)
     current_year = datetime.datetime.now().year+1
@@ -79,14 +71,8 @@ def checkout(l):
         'credit_card_cvv': f"{random.randint(100, 999)}",
     })
     
-def all_pod(l):
-    l.client.get("/")
-    browseProduct(l)
-    setCurrency(l)
-    checkout(l)
-
 def logout(l):
-    l.client.get('/logout')
+    l.client.get('/logout')  
 
 
 class UserBehavior(TaskSet):
@@ -95,8 +81,10 @@ class UserBehavior(TaskSet):
         index(self)
 
     tasks = {index: 1,
-        setCurrency: 1,
-        browseProduct: 1,
+        setCurrency: 2,
+        browseProduct: 10,
+        addToCart: 2,
+        viewCart: 3,
         checkout: 1}
 
 class WebsiteUser(FastHttpUser):
