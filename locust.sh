@@ -13,7 +13,7 @@ for i in $(seq 1 "${N}"); do
     --locustfile src/loadgenerator/locustfile.py \
     --headless \
     --expect-workers 0 \
-    --host http://localhost:31036 \
+    --host http://172.18.0.2:32604 \
     --users 500 \
     --spawn-rate 50 \
     --run-time 30m \

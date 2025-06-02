@@ -21,24 +21,27 @@ from datetime import datetime, timedelta
 GENERATION = 10
 NUM_NEXT = 10
 all_deployments = ["adservice", "cartservice", "checkoutservice", "currencyservice", "emailservice", "paymentservice","productcatalogservice", "recommendationservice", "shippingservice"]
-NAMESPACE = "boutique"
+NAMESPACE = "default"
 paused_pods = {}
 service_groups = []  # グローバルなサービスグループ
 pause_counts = {dep: 0 for dep in all_deployments}  # グローバルなpause回数辞書
 # RM（Resilience Margin）サンプルを蓄積
 rm_records = {dep: [] for dep in all_deployments}
 r_add=1.01
-algo_interval = 120
-kill_interval = 40
-pause_interval = 40*kill_interval
-log_interval = 20
+algo_interval =300
+kill_interval = 50
+pause_interval =50
+log_interval = 30
 PROGRAM_START_TIME = datetime.now()
 # pause_intervalごとにファイルを分けるjp:
 CSV_TIMESTAMP = datetime.now().strftime('%Y%m%d-%H%M%S')
-csv_filename = f"pod_status-{pause_interval}-{CSV_TIMESTAMP}.csv"
+csv_filename = f"pod_status-{CSV_TIMESTAMP}.csv"
 REPLICA=3
 # グローバル変数として追加
-current_service_avail = [0.99] * len(all_deployments)  # デフォルト値
+first_service_avail = 0.7
+current_service_avail = [first_service_avail] * len(all_deployments)  # デフォルト値
+# Define last_optimize_running as a global variable at the top of the script
+last_optimize_running = {}
 # ---------------------------
 
 
@@ -284,17 +287,15 @@ def parse_resource_limit(resource_limit_str, num_services):
 # ---------------------------
 # Operator本体：CRD を監視して、最適化アルゴリズムを実行し、結果をCRD statusに反映
 # ---------------------------
-@kopf.on.create('myapp.example.com', 'v1alpha1', 'AppConfig')
-def init_pod_status(spec, logger, **kwargs):
-    logger.info("初期化: log_pod_status を一度実行して CSV を作成します")
-    log_pod_status(spec)
+
+last_optimize_running = {}
 
 @kopf.on.create('myapp.example.com', 'v1alpha1', 'AppConfig')
 @kopf.timer('myapp.example.com', 'v1alpha1', 'AppConfig', interval=algo_interval)
 def optimize_appconfig(spec, meta, status, logger, **kwargs):
-    global service_groups, pause_counts, csv_filename, current_service_avail
+    global service_groups, pause_counts, csv_filename, current_service_avail, last_optimize_running
 
-    namespace = meta.get('namespace', 'boutique')
+    namespace = meta.get('namespace', "default")
     preferences = spec.get('preferences', {})
     generation = int(preferences.get('generation', GENERATION))
     NUM_START = int(preferences.get('numStart', 50))
@@ -307,7 +308,7 @@ def optimize_appconfig(spec, meta, status, logger, **kwargs):
 
     if not os.path.exists(csv_filename):
         # CSVが存在しない = 初回実行
-        current_service_avail = [0.99] * len(all_deployments)
+        current_service_avail = [first_service_avail] * len(all_deployments)
         logger.warning(f"{csv_filename} not found. Using default 0.99 availability.")
     else:
         df = pd.read_csv(csv_filename, parse_dates=["timestamp"])
@@ -315,8 +316,9 @@ def optimize_appconfig(spec, meta, status, logger, **kwargs):
         # optimize_flag == 1 の行インデックスを探す
         optimize_rows = df.index[df["optimize_flag"] == 1].tolist()
 
-        if len(optimize_rows) >= 3:
-            start_idx = optimize_rows[-3]
+        during_algo = algo_interval/log_interval
+        if len(optimize_rows) >= during_algo:
+            start_idx = optimize_rows[-during_algo]
             df_filtered = df.loc[start_idx+1:]
         else:
             df_filtered = df
@@ -328,6 +330,7 @@ def optimize_appconfig(spec, meta, status, logger, **kwargs):
 
             total_running = df_filtered[run_col].sum()
             total_paused = df_filtered[pause_col].sum()
+            print(f"total_running: {total_running}, total_paused: {total_paused}")
             total = total_running + total_paused
 
             avail = total_running / total if total > 0 else 1.0
@@ -342,6 +345,10 @@ def optimize_appconfig(spec, meta, status, logger, **kwargs):
     best_solution_list = best_solution.tolist() if isinstance(best_solution, np.ndarray) else best_solution
     best_software_count = int(best_counts[0])
     best_RUE = float(best_RUEs[0])
+
+    # Update last_optimize_running with the optimal redundancy numbers
+    for i, dep in enumerate(all_deployments):
+        last_optimize_running[dep] = best_solution_list[i] if i < len(best_solution_list) else REPLICA
 
     groups = find_ones(best_solution)
     group_sizes = [sum(row) for row in best_solution]
@@ -364,13 +371,14 @@ def optimize_appconfig(spec, meta, status, logger, **kwargs):
     all_redundancy_list = [int(r) for r in all_redundancy_list]
 
     logger.info(f"Optimization result (grouping): best solution matrix: {best_solution_list}, software count: {best_software_count}, RUE: {best_RUE}")
+    print(f"DEBUG: Updated last_optimize_running = {last_optimize_running}")
     service_groups = best_solution_list
     config.load_kube_config()
 
     apps = client.AppsV1Api()
     for i, deployment in enumerate(all_deployments):
         replicas = all_redundancy_list[i]
-        ns = "boutique"
+        ns = "default"
         body = {"spec": {"replicas": replicas}}
         try:
             apps.patch_namespaced_deployment(deployment, ns, body)
@@ -387,7 +395,37 @@ def optimize_appconfig(spec, meta, status, logger, **kwargs):
     else:
         logger.warning("optimize_flag を立てるための CSV がまだ存在しません。")
 
+@kopf.on.create('myapp.example.com', 'v1alpha1', 'AppConfig')
+def init_pod_status(spec, logger, **kwargs):
+    logger.info("初期化: log_pod_status を一度実行して CSV を作成します")
+    print(f"DEBUG: init_pod_status called, REPLICA = {REPLICA}")
+    
+    # 既存のCSVファイルを削除して新しく開始
+    global csv_filename
+    if os.path.exists(csv_filename):
+        os.remove(csv_filename)
+        print(f"DEBUG: Removed existing CSV file: {csv_filename}")
+    
+    # アルゴリズム実行時の結果（REPLICA=3）を記録
+    now = datetime.now()
+    now_iso = now.isoformat()
+    
+    with open(csv_filename, 'w', newline='') as f:
+        writer = csv.writer(f)
+        header = ["timestamp"]
+        for dep in all_deployments:
+            header += [f"{dep}_running", f"{dep}_paused"]
+        header += ["optimize_flag", "pause_flag"]
+        writer.writerow(header)
 
+    with open(csv_filename, 'a', newline='') as f:
+        writer = csv.writer(f)
+        row = [now_iso]
+        for dep in all_deployments:
+            row += [REPLICA, 0]  # 全てのサービスをREPLICAに設定
+            print(f"DEBUG: init - Writing {dep}: running={REPLICA}, paused=0")
+        row += [1, 0]  # optimize_flag=1
+        writer.writerow(row)
 
 # ---- Helper ----
 def get_deployment_name(pod):
@@ -412,7 +450,7 @@ def scale_deployment(v1_apps, deployment_name, namespace, duration, logger):
         new_replicas = original - 1
         patch = {"spec": {"replicas": new_replicas}}
         v1_apps.patch_namespaced_deployment(deployment_name, namespace, patch)
-        logger.info(f"Scaled down {deployment_name}: {original} → {new_replicas}")
+        #logger.info(f"Scaled down {deployment_name}: {original} → {new_replicas}")
 
         # カウントも増やしておく
         pause_counts[deployment_name] += 1
@@ -423,7 +461,7 @@ def scale_deployment(v1_apps, deployment_name, namespace, duration, logger):
         # 4) 元に戻す
         patch = {"spec": {"replicas": original}}
         v1_apps.patch_namespaced_deployment(deployment_name, namespace, patch)
-        logger.info(f"Restored {deployment_name}: {new_replicas} → {original}")
+        #logger.info(f"Restored {deployment_name}: {new_replicas} → {original}")
 
     except Exception as e:
         logger.error(f"Failed to scale deployment {deployment_name}: {e}")
@@ -454,7 +492,7 @@ def kill_sidecar_timer(spec, logger, **kwargs):
             continue
 
         # optimize_appconfigで計算したサービス可用性を使用
-        if random.random() >= current_service_avail[svc_idx]:
+        if random.random() <= current_service_avail[svc_idx]:
             continue
 
         # 所属グループが既に処理済みならスキップ
@@ -493,7 +531,7 @@ def get_group_id(service_index):
     return -1
 
 @kopf.timer('myapp.example.com', 'v1alpha1', 'AppConfig', interval=log_interval)
-def log_pod_status(spec, **kwargs):
+def log_pod_status(spec, optimize_flag=0, **kwargs):
     global paused_pods, csv_filename
     now = datetime.now()
     now_iso = now.isoformat()
@@ -501,59 +539,106 @@ def log_pod_status(spec, **kwargs):
         print("3時間が経過したためプログラムを終了します。")
         sys.exit(0)
 
+    # デバッグ用のprint
+    print(f"DEBUG: log_pod_status called with optimize_flag={optimize_flag}")
+    print(f"DEBUG: REPLICA value = {REPLICA}")
+
     config.load_kube_config()
     apps_v1 = client.AppsV1Api()
     v1 = client.CoreV1Api()
 
-    deployments = apps_v1.list_namespaced_deployment(namespace=NAMESPACE).items
-    desired_replicas = {dep.metadata.name: dep.spec.replicas for dep in deployments if dep.metadata.name in all_deployments}
-
-    pods = v1.list_namespaced_pod(namespace=NAMESPACE).items
-    status_counts = {dep: {"running": 0, "paused": 0} for dep in all_deployments}
-
-    currently_paused_pods = set()
-    now_epoch = time.time()
-    for pod_name, resume_time in paused_pods.items():
-        if now_epoch < resume_time:
-            currently_paused_pods.add(pod_name)
-
-    for pod in pods:
-        deployment = get_deployment_name(pod)
-        if deployment not in all_deployments:
-            continue
-        if not deployment:
-            continue
-
-        pod_name = pod.metadata.name
-        if pod_name in currently_paused_pods:
-            status_counts[deployment]["paused"] += 1
-        elif pod.status.phase == "Running":
-            status_counts[deployment]["running"] += 1
-
-    for dep in all_deployments:
-        if dep not in desired_replicas:
-            continue
-        total_expected = desired_replicas[dep]
-        running_now = status_counts[dep]["running"]
-        paused_now = status_counts[dep]["paused"]
-        unknown = max(total_expected - (running_now + paused_now), 0)
-        status_counts[dep]["running"] += unknown
-
-    if not os.path.exists(csv_filename):
-        with open(csv_filename, 'w', newline='') as f:
-            writer = csv.writer(f)
-            header = ["timestamp"]
+    # 直前のoptimize_flag=1の時のrunning数を取得
+    last_optimize_running = {}
+    if os.path.exists(csv_filename):
+        df = pd.read_csv(csv_filename)
+        optimize_rows = df.index[df["optimize_flag"] == 1].tolist()
+        if optimize_rows:
+            last_optimize_idx = optimize_rows[-1]
             for dep in all_deployments:
-                header += [f"{dep}_running", f"{dep}_paused"]
-            header += ["optimize_flag", "pause_flag"]
-            writer.writerow(header)
+                run_col = f"{dep}_running"
+                last_optimize_running[dep] = df.loc[last_optimize_idx, run_col]
+            print(f"DEBUG: last_optimize_running = {last_optimize_running}")
+        else:
+            # 最適化フラグがない場合はREPLICAを基準とする
+            for dep in all_deployments:
+                last_optimize_running[dep] = REPLICA
+            print(f"DEBUG: No optimize rows found, using REPLICA={REPLICA}")
 
-    with open(csv_filename, 'a', newline='') as f:
-        writer = csv.writer(f)
-        row = [now_iso]
+    if optimize_flag == 1:
+        # アルゴリズム実行時は、Kubernetesの状態を参照せずにREPLICAを直接設定
+        status_counts = {dep: {"running": REPLICA, "paused": 0} for dep in all_deployments}
+        print(f"DEBUG: Algorithm execution - status_counts = {status_counts}")
+        
+        # アルゴリズム実行時の状態を即座に記録
+        if not os.path.exists(csv_filename):
+            with open(csv_filename, 'w', newline='') as f:
+                writer = csv.writer(f)
+                header = ["timestamp"]
+                for dep in all_deployments:
+                    header += [f"{dep}_running", f"{dep}_paused"]
+                header += ["optimize_flag", "pause_flag"]
+                writer.writerow(header)
+
+        with open(csv_filename, 'a', newline='') as f:
+            writer = csv.writer(f)
+            row = [now_iso]
+            for dep in all_deployments:
+                running = status_counts[dep]["running"]
+                paused = status_counts[dep]["paused"]
+                row += [running, paused]
+                print(f"DEBUG: Writing {dep}: running={running}, paused={paused}")
+            row += [optimize_flag, 0]
+            writer.writerow(row)
+        
+        # アルゴリズム実行時の状態をlast_optimize_runningに保存
         for dep in all_deployments:
-            running = status_counts[dep]["running"]
-            paused = status_counts[dep]["paused"]
-            row += [running, paused]
-        row += [0, 0]
-        writer.writerow(row)
+            last_optimize_running[dep] = REPLICA
+    else:
+        # 通常時はKubernetesの状態を取得
+        pods = v1.list_namespaced_pod(namespace=NAMESPACE).items
+        status_counts = {dep: {"running": 0, "paused": 0} for dep in all_deployments}
+        
+        for pod in pods:
+            deployment = get_deployment_name(pod)
+            if deployment not in all_deployments:
+                continue
+            if not deployment:
+                continue
+
+            if pod.status.phase == "Running":
+                status_counts[deployment]["running"] += 1
+
+        print(f"DEBUG: Raw k8s status_counts = {status_counts}")
+
+        # pausedの計算を最適化時のrunning数との差分で行う
+        for dep in all_deployments:
+            if dep in last_optimize_running:
+                optimize_running = last_optimize_running[dep]
+                current_running = status_counts[dep]["running"]
+                status_counts[dep]["paused"] = max(optimize_running - current_running, 0)
+                status_counts[dep]["running"] = optimize_running - status_counts[dep]["paused"]
+                print(f"DEBUG: {dep}: optimize_running={optimize_running}, current_running={current_running}, final_running={status_counts[dep]['running']}, paused={status_counts[dep]['paused']}")
+
+        # 通常時の状態を記録
+        if not os.path.exists(csv_filename):
+            with open(csv_filename, 'w', newline='') as f:
+                writer = csv.writer(f)
+                header = ["timestamp"]
+                for dep in all_deployments:
+                    header += [f"{dep}_running", f"{dep}_paused"]
+                header += ["optimize_flag", "pause_flag"]
+                writer.writerow(header)
+
+        with open(csv_filename, 'a', newline='') as f:
+            writer = csv.writer(f)
+            row = [now_iso]
+            for dep in all_deployments:
+                running = status_counts[dep]["running"]
+                paused = status_counts[dep]["paused"]
+                row += [running, paused]
+            row += [optimize_flag, 0]
+            writer.writerow(row)
+
+    print(f"DEBUG: Updated last_optimize_running = {last_optimize_running}")
+
+

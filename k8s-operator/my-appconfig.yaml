@@ -2,7 +2,7 @@ apiVersion: myapp.example.com/v1alpha1
 kind: AppConfig
 metadata:
   name: microservices-demo
-  namespace: boutique
+  namespace: default
 spec:
   services:
     - name: adservice
