@@ -28,7 +28,8 @@ service_groups = []  # グローバルなサービスグループ
 pause_counts = {dep: 0 for dep in all_deployments}  # グローバルなpause回数辞書
 # RM（Resilience Margin）サンプルを蓄積
 rm_records = {dep: [] for dep in all_deployments}
-r_add=1.05
+r_adds=[0.75,1,1.25]
+r_add=r_adds[0]
 algo_interval = 120
 kill_interval = 40
 pause_interval = 40*kill_interval
@@ -280,6 +281,28 @@ def parse_resource_limit(resource_limit_str, num_services):
         return factor * num_services
     return int(resource_limit_str)
 
+# === 追加: 可用性計算用関数 ===
+def calculate_service_availability(csv_filename, all_deployments):
+    if not os.path.exists(csv_filename):
+        return [1.0] * len(all_deployments)
+    df = pd.read_csv(csv_filename)
+    optimize_rows = df.index[df["optimize_flag"] == 1].tolist()
+    if optimize_rows:
+        last_optimize_idx = optimize_rows[-1]
+        logs_since_last_optimize = df.iloc[last_optimize_idx+1:] if last_optimize_idx+1 < len(df) else pd.DataFrame()
+    else:
+        logs_since_last_optimize = df
+    service_availability = []
+    for dep in all_deployments:
+        running_col = f"{dep}_running"
+        paused_col = f"{dep}_paused"
+        total_running = logs_since_last_optimize[running_col].sum() if running_col in logs_since_last_optimize else 0
+        total_paused = logs_since_last_optimize[paused_col].sum() if paused_col in logs_since_last_optimize else 0
+        total = total_running + total_paused
+        avail = total_running / total if total > 0 else 1.0
+        service_availability.append(avail)
+    return service_availability
+
 # ---------------------------
 # Operator本体：CRD を監視して、最適化アルゴリズムを実行し、結果をCRD statusに反映
 # ---------------------------
@@ -304,35 +327,9 @@ def optimize_appconfig(spec, meta, status, logger, **kwargs):
     num_services = len(all_deployments) - 1
     H = (num_services + 1) * REPLICA
 
-    if not os.path.exists(csv_filename):
-        # CSVが存在しない = 初回実行
-        service_avail = [0.99] * len(all_deployments)
-        logger.warning(f"{csv_filename} not found. Using default 0.99 availability.")
-    else:
-        df = pd.read_csv(csv_filename, parse_dates=["timestamp"])
-
-        # optimize_flag == 1 の行インデックスを探す
-        optimize_rows = df.index[df["optimize_flag"] == 1].tolist()
-
-        if len(optimize_rows) >= 3:
-            start_idx = optimize_rows[-3]
-            df_filtered = df.loc[start_idx+1:]
-        else:
-            df_filtered = df
-
-        service_avail = []
-        for dep in all_deployments:
-            run_col = f"{dep}_running"
-            pause_col = f"{dep}_paused"
-
-            total_running = df_filtered[run_col].sum()
-            total_paused = df_filtered[pause_col].sum()
-            total = total_running + total_paused
-
-            avail = total_running / total if total > 0 else 1.0
-            service_avail.append(avail)
-
-        logger.info(f"Calculated service availabilities: {service_avail}")
+    # === 可用性を前回optimize以降のlogから計算 ===
+    service_avail = calculate_service_availability(csv_filename, all_deployments)
+    logger.info(f"Calculated service availabilities: {service_avail}")
 
     pause_counts = {dep: 0 for dep in all_deployments}
 
@@ -376,6 +373,8 @@ def optimize_appconfig(spec, meta, status, logger, **kwargs):
             logger.info(f"Updated deployment: {deployment} with replicas: {replicas}")
         except kubernetes.client.exceptions.ApiException as e:
             logger.error(f"Failed to update deployment {deployment}: {e}")
+    # === optimize時に拡張CSVログを出力 ===
+    log_pod_status(spec, optimize_flag=1, service_groups=best_solution_list, service_availabilities=service_avail)
     if os.path.exists(csv_filename := f"pod_status-{CSV_TIMESTAMP}.csv"):
         df = pd.read_csv(csv_filename)
         if not df.empty:
@@ -479,7 +478,7 @@ def get_group_id(service_index):
     return -1
 
 @kopf.timer('myapp.example.com', 'v1alpha1', 'AppConfig', interval=log_interval)
-def log_pod_status(spec, **kwargs):
+def log_pod_status(spec, optimize_flag=0, service_groups=None, service_availabilities=None, **kwargs):
     global paused_pods, csv_filename
     now = datetime.now()
     now_iso = now.isoformat()
@@ -509,7 +508,6 @@ def log_pod_status(spec, **kwargs):
             continue
         if not deployment:
             continue
-
         pod_name = pod.metadata.name
         if pod_name in currently_paused_pods:
             status_counts[deployment]["paused"] += 1
@@ -525,21 +523,45 @@ def log_pod_status(spec, **kwargs):
         unknown = max(total_expected - (running_now + paused_now), 0)
         status_counts[dep]["running"] += unknown
 
+    # === 拡張CSVヘッダー ===
+    max_groups = 9  # サービス数分
+    header = ["timestamp"]
+    for dep in all_deployments:
+        header += [f"{dep}_running", f"{dep}_paused"]
+    for i in range(max_groups):
+        header.append(f"service_group_{i}")
+    for i in range(max_groups):
+        header.append(f"service_avail_{i}")
+    header += ["optimize_flag", "pause_flag"]
+
     if not os.path.exists(csv_filename):
         with open(csv_filename, 'w', newline='') as f:
             writer = csv.writer(f)
-            header = ["timestamp"]
-            for dep in all_deployments:
-                header += [f"{dep}_running", f"{dep}_paused"]
-            header += ["optimize_flag", "pause_flag"]
             writer.writerow(header)
 
+    # === データ行 ===
+    row = [now_iso]
+    for dep in all_deployments:
+        running = status_counts[dep]["running"]
+        paused = status_counts[dep]["paused"]
+        row += [running, paused]
+    # サービスグループ
+    if service_groups is None:
+        service_groups = []
+    for i in range(max_groups):
+        if i < len(service_groups):
+            row.append(str(service_groups[i]))
+        else:
+            row.append("")
+    # 可用性
+    if service_availabilities is None:
+        service_availabilities = []
+    for i in range(max_groups):
+        if i < len(service_availabilities):
+            row.append(str(service_availabilities[i]))
+        else:
+            row.append("")
+    row += [optimize_flag, 0]
     with open(csv_filename, 'a', newline='') as f:
         writer = csv.writer(f)
-        row = [now_iso]
-        for dep in all_deployments:
-            running = status_counts[dep]["running"]
-            paused = status_counts[dep]["paused"]
-            row += [running, paused]
-        row += [0, 0]
         writer.writerow(row)

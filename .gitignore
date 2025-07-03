@@ -17,6 +17,8 @@
 *.swp
 *.tfstate*
 *.tfvars
+*.png
+*.csv
 *~
 bin/
 build/
