@@ -6,9 +6,9 @@
 NUM_RUNS=1
 
 # 各テストのユーザー数やランタイムなどのパラメータ
-USERS=10
+USERS=100
 SPAWN_RATE=10
-RUN_TIME="15s"  # 15秒間テスト
+RUN_TIME="1m"  # 15秒間テスト
 
 # locustfile.pyのパス
 LOCUSTFILE="src/loadgenerator/locustfile.py"
@@ -37,8 +37,7 @@ modify_r_add() {
     echo "Modifying r_add to $r_add_value..."
     sed -i.tmp "s/^r_add=.*$/r_add=$r_add_value/" "$OPERATOR_PATH"
     rm -f "${OPERATOR_PATH}.tmp"
-    echo "Modified replicaset.py (r_add=$r_add_value)"
-}
+    }
 
 # 関数：K8s Operatorを開始
 start_operator() {

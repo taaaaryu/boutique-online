@@ -1,5 +1,3 @@
-"""# locust.sh
-
 #!/bin/bash
 
 # テストするユーザー数のリスト
@@ -39,7 +37,7 @@ modify_r_add() {
     echo "Modifying r_add to $r_add_value..."
     sed -i.tmp "s/^r_add=.*$/r_add=$r_add_value/" "$OPERATOR_PATH"
     rm -f "${OPERATOR_PATH}.tmp"
-    echo "Modified replicaset.py (r_add=$r_add_value)"
+    echo "Modified replicaset.py \(r_add=$r_add_value\)"
 }
 
 # 関数：K8s Operatorを開始
@@ -71,12 +69,12 @@ stop_operator() {
 # 関数：特定のアーキテクチャでテストを実行
 run_tests_for_architecture() {
     local user_count=$1
-    local arch_type=$2
+    local arch_type=$2  
     local r_add_value=$3
     local arch_dir="$RESULTS_DIR/$user_count/$arch_type"
 
     echo "========================================"
-    echo "Starting tests for $user_count users, $arch_type Architecture (r_add=$r_add_value)"
+    echo "Starting tests for $user_count users, $arch_type Architecture \(r_add=$r_add_value\)"
     echo "========================================"
 
     # アーキテクチャごとのディレクトリを作成
@@ -150,4 +148,3 @@ echo "========================================"
 echo "All user scaling tests completed!"
 echo "Results saved in: $RESULTS_DIR"
 echo "========================================"
-""
