@@ -29,7 +29,7 @@ pause_counts = {dep: 0 for dep in all_deployments}  # グローバルなpause回
 # RM（Resilience Margin）サンプルを蓄積
 rm_records = {dep: [] for dep in all_deployments}
 r_adds=[0.75,1,1.25]
-r_add=r_adds[0]
+r_add=0.75
 SERVER_AVAILABILITY = 0.99
 algo_interval = 120
 kill_interval = 40
@@ -38,7 +38,7 @@ log_interval = 20
 PROGRAM_START_TIME = datetime.now()
 # pause_intervalごとにファイルを分けるjp:
 CSV_TIMESTAMP = datetime.now().strftime('%Y%m%d-%H%M%S')
-csv_filename = f"pod_status-{pause_interval}-{CSV_TIMESTAMP}.csv"
+csv_filename = f"pod_status-Mono-{pause_interval}-{CSV_TIMESTAMP}.csv"
 REPLICA=3
 # ---------------------------
 
