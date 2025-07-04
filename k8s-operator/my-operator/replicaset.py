@@ -402,15 +402,6 @@ def optimize_appconfig(spec, meta, status, logger, **kwargs):
             logger.error(f"Failed to update deployment {deployment}: {e}")
     # === optimize時に拡張CSVログを出力 ===
     log_pod_status(spec, optimize_flag=1, service_groups=best_solution_list, service_availabilities=service_avail)
-    if os.path.exists(csv_filename := f"pod_status-{CSV_TIMESTAMP}.csv"):
-        df = pd.read_csv(csv_filename)
-        if not df.empty:
-            df.loc[df.index[-1], "optimize_flag"] = 1
-            df.to_csv(csv_filename, index=False)
-        else:
-            logger.warning("optimize_flag を立てる前に log_pod_status を一度実行してください。")
-    else:
-        logger.warning("optimize_flag を立てるための CSV がまだ存在しません。")
 
 
 

@@ -3,12 +3,12 @@
 #!/bin/bash
 
 # 実行回数を指定（例: 5回）
-NUM_RUNS=5
+NUM_RUNS=1
 
 # 各テストのユーザー数やランタイムなどのパラメータ
-USERS=1000
-SPAWN_RATE=250
-RUN_TIME="30m"  # 30分間テスト
+USERS=10
+SPAWN_RATE=10
+RUN_TIME="15s"  # 15秒間テスト
 
 # locustfile.pyのパス
 LOCUSTFILE="src/loadgenerator/locustfile.py"
@@ -102,7 +102,7 @@ run_tests_for_architecture() {
     for i in $(seq 1 $NUM_RUNS)
     do
         echo "==== $arch_type Run $i/$NUM_RUNS ===="
-        locust -f "$LOCUSTFILE" --headless -u $USERS -r $SPAWN_RATE --run-time $RUN_TIME --host "$HOST" --logfile "locust_${arch_type}_run_${i}.log"
+        ARCH_TYPE="$arch_type" RUN_NUM=$i locust -f "$LOCUSTFILE" --headless -u $USERS -r $SPAWN_RATE --run-time $RUN_TIME --host "$HOST" --logfile "locust_${arch_type}_run_${i}.log" --csv "locust_${arch_type}_run_${i}"
         echo "==== Finished $arch_type Run $i ===="
         
         # 次のテストまでの待機時間（オペレーターが結果を処理する時間を確保）

@@ -58,10 +58,50 @@ def addToCart(l):
 def empty_cart(l):
     l.client.post('/cart/empty')
 
+import os
+import csv
+
+# Get architecture and run number from environment variables
+ARCH_TYPE = os.environ.get("ARCH_TYPE", "unknown")
+RUN_NUM = os.environ.get("RUN_NUM", "0")
+
+# Define the CSV file name based on arch and run number
+log_file_name = f"request_log_{ARCH_TYPE}_run_{RUN_NUM}.csv"
+log_file = None
+csv_writer = None
+
+@events.test_start.add_listener
+def on_test_start(environment, **kwargs):
+    """
+    Open the log file and write the header row when a new test starts.
+    """
+    global log_file, csv_writer
+    log_file = open(log_file_name, "w", newline="")
+    csv_writer = csv.writer(log_file)
+    csv_writer.writerow(["timestamp", "method", "path", "response_time", "status"])
+
 @events.request.add_listener
 def on_request(request_type, name, response_time, response_length, response, **kwargs):
-    if response.status_code >= 400:
-        print(f"Request failed: {name} - Status: {response.status_code}")
+    """
+    Log every request to the CSV file.
+    """
+    if csv_writer:
+        status = "SUCCESS" if response.status_code < 400 else "FAILURE"
+        csv_writer.writerow([
+            datetime.datetime.now().isoformat(),
+            request_type,
+            name,
+            response_time,
+            status
+        ])
+
+@events.test_stop.add_listener
+def on_test_stop(environment, **kwargs):
+    """
+    Close the log file when the test stops.
+    """
+    if log_file:
+        log_file.close()
 
 def checkout(l):
     addToCart(l)

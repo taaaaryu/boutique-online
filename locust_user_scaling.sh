@@ -170,11 +170,6 @@ File Naming Convention:
 - Locust logs: locust_{Mono|Hybrid|Micro}_{usercount}users_run_{1-$NUM_RUNS}.log
 - Pod status: pod_status-{Mono|Hybrid|Micro}-{usercount}-{interval}-{timestamp}.csv
 
-Analysis Suggestions:
-1. Compare response times across user counts for each architecture
-2. Analyze pod failure patterns vs user load
-3. Examine resource utilization differences between architectures
-4. Identify breaking points for each architecture type
 EOF
 
     echo "Summary generated at: $summary_file"
