@@ -19,7 +19,7 @@ from datetime import datetime, timedelta
 GENERATION = 10
 NUM_NEXT = 10
 all_deployments = ["adservice", "cartservice", "checkoutservice", "currencyservice", "emailservice", "paymentservice","productcatalogservice", "recommendationservice", "shippingservice"]
-NAMESPACE = "boutique"
+NAMESPACE = "default"
 KILL_PROBABILITY = 0.01  # 各サービスがkillされる確率
 paused_pods = {}
 service_groups = []  # グローバルなサービスグループ
@@ -318,11 +318,11 @@ def init_pod_status(spec, logger, **kwargs):
 def optimize_appconfig(spec, meta, status, logger, **kwargs):
     global service_groups, pause_counts, csv_filename
 
-    namespace = meta.get('namespace', 'boutique')
+    namespace = meta.get('namespace', 'default')
     preferences = spec.get('preferences', {})
     generation = int(preferences.get('generation', GENERATION))
     NUM_START = int(preferences.get('numStart', 50))
-    max_redundancy = int(preferences.get('maxReplicas', 3))
+    max_redundancy = 10
 
     server_avail = SERVER_AVAILABILITY
     service_resource = 1
@@ -387,14 +387,14 @@ def optimize_appconfig(spec, meta, status, logger, **kwargs):
         all_redundancy_list += [redundancy_list[i]] * group_sizes[i]
     all_redundancy_list = [int(r) for r in all_redundancy_list]
 
-    logger.info(f"Optimization result (grouping): best solution matrix: {best_solution_list}, software count: {best_software_count}, RUE: {best_RUE}")
+    logger.info(f"Optimization result (grouping): best solution matrix: {best_solution_list}, software count: {best_software_count}, all redundancy list: {all_redundancy_list}")
     service_groups = best_solution_list
     config.load_kube_config()
 
     apps = client.AppsV1Api()
     for i, deployment in enumerate(all_deployments):
         replicas = all_redundancy_list[i]
-        ns = "boutique"
+        ns = "default"
         body = {"spec": {"replicas": replicas}}
         try:
             apps.patch_namespaced_deployment(deployment, ns, body)
