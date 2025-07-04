@@ -15,25 +15,23 @@ import os
 import sys  # これも忘れずに！
 from datetime import datetime, timedelta
 
-# ---------------------------
-# ユーザー提供のアルゴリズムコード（グローバル定数はCRDから渡すので、ここではデフォルト値）
-# ---------------------------
+
 GENERATION = 10
 NUM_NEXT = 10
 all_deployments = ["adservice", "cartservice", "checkoutservice", "currencyservice", "emailservice", "paymentservice","productcatalogservice", "recommendationservice", "shippingservice"]
 NAMESPACE = "boutique"
-KILL_PROBABILITY = 0.05  # 各サービスがkillされる確率
+KILL_PROBABILITY = 0.01  # 各サービスがkillされる確率
 paused_pods = {}
 service_groups = []  # グローバルなサービスグループ
 pause_counts = {dep: 0 for dep in all_deployments}  # グローバルなpause回数辞書
 # RM（Resilience Margin）サンプルを蓄積
 rm_records = {dep: [] for dep in all_deployments}
 r_adds=[0.75,1,1.25]
-r_add=0.75
+r_add=r_adds[0]
 SERVER_AVAILABILITY = 0.99
-algo_interval = 120
+algo_interval = 600
 kill_interval = 40
-pause_interval = 40*kill_interval
+pause_interval = 80
 log_interval = 20
 PROGRAM_START_TIME = datetime.now()
 # pause_intervalごとにファイルを分けるjp:
@@ -42,7 +40,7 @@ LOG_DIR = os.environ.get("LOG_DIR", ".")
 ARCH_TYPE = os.environ.get("ARCH_TYPE", "Mono")
 CSV_TIMESTAMP = datetime.now().strftime('%Y%m%d-%H%M%S')
 csv_filename = f"{LOG_DIR}/pod_status-{ARCH_TYPE}-{pause_interval}-{CSV_TIMESTAMP}.csv"
-REPLICA=3
+REPLICA=5
 # ---------------------------
 
 

@@ -1,14 +1,14 @@
 #!/bin/bash
 
 # テストするユーザー数のリスト
-USER_COUNTS=(10 50 100)
+USER_COUNTS=(1000 1100 1200 1300 1400 1500)
 
 # 実行回数を指定
-NUM_RUNS=1
+NUM_RUNS=3
 
 # 各テストのランタイム
-SPAWN_RATE=10
-RUN_TIME="15s"
+SPAWN_RATE=100
+RUN_TIME="30m"
 
 # locustfile.pyのパス
 LOCUSTFILE="src/loadgenerator/locustfile.py"
@@ -71,7 +71,7 @@ run_tests_for_architecture() {
     local user_count=$1
     local arch_type=$2  
     local r_add_value=$3
-    local arch_dir="$RESULTS_DIR/$user_count/$arch_type"
+    local arch_dir="$RESULTS_DIR/users/$user_count/$arch_type"
 
     echo "========================================"
     echo "Starting tests for $user_count users, $arch_type Architecture \(r_add=$r_add_value\)"
