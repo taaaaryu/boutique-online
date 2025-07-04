@@ -30,6 +30,7 @@ pause_counts = {dep: 0 for dep in all_deployments}  # グローバルなpause回
 rm_records = {dep: [] for dep in all_deployments}
 r_adds=[0.75,1,1.25]
 r_add=r_adds[0]
+SERVER_AVAILABILITY = 0.99
 algo_interval = 120
 kill_interval = 40
 pause_interval = 40*kill_interval
@@ -322,7 +323,7 @@ def optimize_appconfig(spec, meta, status, logger, **kwargs):
     NUM_START = int(preferences.get('numStart', 50))
     max_redundancy = int(preferences.get('maxReplicas', 3))
 
-    server_avail = 0.95
+    server_avail = SERVER_AVAILABILITY
     service_resource = 1
     num_services = len(all_deployments) - 1
     H = (num_services + 1) * REPLICA
@@ -333,11 +334,37 @@ def optimize_appconfig(spec, meta, status, logger, **kwargs):
 
     pause_counts = {dep: 0 for dep in all_deployments}
 
-    best_matrices, best_counts, best_RUEs = multi_start_greedy(r_add, service_avail, server_avail, H, num_services, NUM_START)
-    best_solution = best_matrices[0]
-    best_solution_list = best_solution.tolist() if isinstance(best_solution, np.ndarray) else best_solution
-    best_software_count = int(best_counts[0])
-    best_RUE = float(best_RUEs[0])
+    # === r_addの値に応じてサービスグループを決定 ===
+    logger.info(f"Current r_add value: {r_add}")
+    
+    if abs(r_add - 0.75) < 0.01:  # r_add = 0.75 (Mono architecture)
+        logger.info("Using Monolithic architecture: All services in one group")
+        # 全サービスを1つのグループに配置
+        best_solution = [[1, 1, 1, 1, 1, 1, 1, 1, 1]]
+        best_solution_list = best_solution
+        best_software_count = 1
+        best_RUE = 0.0  # ダミー値
+        
+    elif abs(r_add - 1.25) < 0.01:  # r_add = 1.25 (Micro architecture)
+        logger.info("Using Microservices architecture: Each service in separate group")
+        # 各サービスを個別のグループに配置
+        best_solution = []
+        for i in range(len(all_deployments)):
+            group = [0] * len(all_deployments)
+            group[i] = 1
+            best_solution.append(group)
+        best_solution_list = best_solution
+        best_software_count = len(all_deployments)
+        best_RUE = 0.0  # ダミー値
+        
+    else:  # r_add = 1.0 or other values (Hybrid architecture)
+        logger.info("Using Hybrid architecture: Running optimization algorithm")
+        # 既存の最適化アルゴリズムを実行
+        best_matrices, best_counts, best_RUEs = multi_start_greedy(r_add, service_avail, server_avail, H, num_services, NUM_START)
+        best_solution = best_matrices[0]
+        best_solution_list = best_solution.tolist() if isinstance(best_solution, np.ndarray) else best_solution
+        best_software_count = int(best_counts[0])
+        best_RUE = float(best_RUEs[0])
 
     groups = find_ones(best_solution)
     group_sizes = [sum(row) for row in best_solution]
