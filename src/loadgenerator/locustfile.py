@@ -62,11 +62,12 @@ import os
 import csv
 
 # Get architecture and run number from environment variables
+LOG_DIR = os.environ.get("LOG_DIR", ".")
 ARCH_TYPE = os.environ.get("ARCH_TYPE", "unknown")
 RUN_NUM = os.environ.get("RUN_NUM", "0")
 
 # Define the CSV file name based on arch and run number
-log_file_name = f"request_log_{ARCH_TYPE}_run_{RUN_NUM}.csv"
+log_file_name = f"{LOG_DIR}/request_log_{ARCH_TYPE}_run_{RUN_NUM}.csv"
 log_file = None
 csv_writer = None
 

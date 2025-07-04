@@ -37,8 +37,11 @@ pause_interval = 40*kill_interval
 log_interval = 20
 PROGRAM_START_TIME = datetime.now()
 # pause_intervalごとにファイルを分けるjp:
+# 実行ごとに一意なCSVファイル名を生成し、すべてのログをこのファイルに記録します
+LOG_DIR = os.environ.get("LOG_DIR", ".")
+ARCH_TYPE = os.environ.get("ARCH_TYPE", "Mono")
 CSV_TIMESTAMP = datetime.now().strftime('%Y%m%d-%H%M%S')
-csv_filename = f"pod_status-Mono-{pause_interval}-{CSV_TIMESTAMP}.csv"
+csv_filename = f"{LOG_DIR}/pod_status-{ARCH_TYPE}-{pause_interval}-{CSV_TIMESTAMP}.csv"
 REPLICA=3
 # ---------------------------
 
