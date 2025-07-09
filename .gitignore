@@ -19,6 +19,8 @@
 *.tfvars
 *.png
 *.csv
+*.pid
+*.log
 *~
 bin/
 build/

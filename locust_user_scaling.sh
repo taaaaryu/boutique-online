@@ -1,26 +1,23 @@
 #!/bin/bash
 
 # テストするユーザー数のリスト
-USER_COUNTS=(1000 1100 1200 1300 1400 1500)
+USER_COUNTS=(1000 1250 1500 1750 2000 )
 
 # 実行回数を指定
 NUM_RUNS=3
 
 # 各テストのランタイム
 SPAWN_RATE=100
-RUN_TIME="30m"
+RUN_TIME="25m"
 
 # locustfile.pyのパス
 LOCUSTFILE="src/loadgenerator/locustfile.py"
 
 # テスト対象のホストURL
-HOST="http://172.18.0.2:32479"
+HOST="http://172.18.0.3:30716"
 
 # K8s Operatorのパス
 OPERATOR_PATH="k8s-operator/my-operator/replicaset.py"
-
-# PIDファイルの保存場所
-OPERATOR_PID_FILE="replicaset_operator.pid"
 
 # 結果を保存するルートディレクトリ
 RESULTS_DIR="locust_results"
@@ -48,20 +45,22 @@ start_operator() {
     echo "Starting replicaset operator for $arch_type..."
     LOG_DIR="$log_dir" ARCH_TYPE="$arch_type" kopf run "$OPERATOR_PATH" &
     OPERATOR_PID=$!
-    echo $OPERATOR_PID > "$OPERATOR_PID_FILE"
+    echo $OPERATOR_PID > "replicaset_operator.pid"
     echo "Operator started with PID: $OPERATOR_PID for $arch_type"
-    sleep 15
+    sleep 15  # Operatorの起動を待つ
 }
 
 # 関数：K8s Operatorを停止
 stop_operator() {
     echo "==== Stopping Kubernetes Operator ===="
-    if [ -f "$OPERATOR_PID_FILE" ]; then
-        OPERATOR_PID=$(cat "$OPERATOR_PID_FILE")
+    if [ -f "replicaset_operator.pid" ]; then
+        OPERATOR_PID=$(cat "replicaset_operator.pid")
         echo "Stopping operator with PID: $OPERATOR_PID"
         kill $OPERATOR_PID 2>/dev/null || echo "Process already stopped"
-        rm -f "$OPERATOR_PID_FILE"
+        rm -f "replicaset_operator.pid"
         sleep 5
+    else
+        pkill -f "kopf run $OPERATOR_PATH"
     fi
     echo "Operator cleanup completed"
 }
@@ -95,7 +94,7 @@ run_tests_for_architecture() {
         echo "==== Finished $arch_type Run $i ===="
         if [ $i -lt $NUM_RUNS ]; then
             echo "Waiting between test runs..."
-            sleep 30
+            sleep 20
         fi
     done
 

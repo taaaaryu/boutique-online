@@ -19,7 +19,7 @@ from datetime import datetime, timedelta
 GENERATION = 10
 NUM_NEXT = 10
 all_deployments = ["adservice", "cartservice", "checkoutservice", "currencyservice", "emailservice", "paymentservice","productcatalogservice", "recommendationservice", "shippingservice"]
-NAMESPACE = "boutique"
+NAMESPACE = "default"
 KILL_PROBABILITY = 0.01  # 各サービスがkillされる確率
 paused_pods = {}
 service_groups = []  # グローバルなサービスグループ
@@ -27,7 +27,7 @@ pause_counts = {dep: 0 for dep in all_deployments}  # グローバルなpause回
 # RM（Resilience Margin）サンプルを蓄積
 rm_records = {dep: [] for dep in all_deployments}
 r_adds=[0.75,1,1.25]
-r_add=r_adds[0]
+r_add=0.75
 SERVER_AVAILABILITY = 0.99
 algo_interval = 600
 kill_interval = 40
@@ -318,16 +318,16 @@ def init_pod_status(spec, logger, **kwargs):
 def optimize_appconfig(spec, meta, status, logger, **kwargs):
     global service_groups, pause_counts, csv_filename
 
-    namespace = meta.get('namespace', 'boutique')
+    namespace = meta.get('namespace', 'default')
     preferences = spec.get('preferences', {})
     generation = int(preferences.get('generation', GENERATION))
     NUM_START = int(preferences.get('numStart', 50))
-    max_redundancy = int(preferences.get('maxReplicas', 3))
+    max_redundancy = 10
 
     server_avail = SERVER_AVAILABILITY
     service_resource = 1
     num_services = len(all_deployments) - 1
-    H = (num_services + 1) * REPLICA
+    H = (num_services + 1) * REPLICA / 2
 
     # === 可用性を前回optimize以降のlogから計算 ===
     service_avail = calculate_service_availability(csv_filename, all_deployments)
@@ -387,14 +387,14 @@ def optimize_appconfig(spec, meta, status, logger, **kwargs):
         all_redundancy_list += [redundancy_list[i]] * group_sizes[i]
     all_redundancy_list = [int(r) for r in all_redundancy_list]
 
-    logger.info(f"Optimization result (grouping): best solution matrix: {best_solution_list}, software count: {best_software_count}, RUE: {best_RUE}")
+    logger.info(f"Optimization result (grouping): best solution matrix: {best_solution_list}, software count: {best_software_count}, all redundancy list: {all_redundancy_list}")
     service_groups = best_solution_list
     config.load_kube_config()
 
     apps = client.AppsV1Api()
     for i, deployment in enumerate(all_deployments):
         replicas = all_redundancy_list[i]
-        ns = "boutique"
+        ns = "default"
         body = {"spec": {"replicas": replicas}}
         try:
             apps.patch_namespaced_deployment(deployment, ns, body)
@@ -402,7 +402,7 @@ def optimize_appconfig(spec, meta, status, logger, **kwargs):
         except kubernetes.client.exceptions.ApiException as e:
             logger.error(f"Failed to update deployment {deployment}: {e}")
     # === optimize時に拡張CSVログを出力 ===
-    log_pod_status(spec, optimize_flag=1, service_groups=best_solution_list, service_availabilities=service_avail)
+    log_pod_status(all_redundancy_list, spec, optimize_flag=1, service_groups=best_solution_list, service_availabilities=service_avail)
 
 
 
@@ -497,7 +497,7 @@ def get_group_id(service_index):
     return -1
 
 @kopf.timer('myapp.example.com', 'v1alpha1', 'AppConfig', interval=log_interval)
-def log_pod_status(spec, optimize_flag=0, service_groups=None, service_availabilities=None, **kwargs):
+def log_pod_status(all_redundancy_list, spec, optimize_flag=0, service_groups=None, service_availabilities=None, **kwargs):
     global paused_pods, csv_filename
     now = datetime.now()
     now_iso = now.isoformat()
@@ -528,19 +528,14 @@ def log_pod_status(spec, optimize_flag=0, service_groups=None, service_availabil
         if not deployment:
             continue
         pod_name = pod.metadata.name
-        if pod_name in currently_paused_pods:
-            status_counts[deployment]["paused"] += 1
-        elif pod.status.phase == "Running":
+        if pod.status.phase == "Running":
             status_counts[deployment]["running"] += 1
 
-    for dep in all_deployments:
-        if dep not in desired_replicas:
-            continue
-        total_expected = desired_replicas[dep]
-        running_now = status_counts[dep]["running"]
-        paused_now = status_counts[dep]["paused"]
-        unknown = max(total_expected - (running_now + paused_now), 0)
-        status_counts[dep]["running"] += unknown
+    for dep in range(len(all_deployments)):
+        total_expected = all_redundancy_list[dep]
+        running_now = status_counts[all_deployments[dep]]["running"]
+        paused_now = total_expected - running_now
+        status_counts[all_deployments[dep]]["paused"] += paused_now
 
     # === 拡張CSVヘッダー ===
     max_groups = 9  # サービス数分
