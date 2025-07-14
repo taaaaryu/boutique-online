@@ -37,9 +37,10 @@ PROGRAM_START_TIME = datetime.now()
 # pause_intervalごとにファイルを分けるjp:
 # 実行ごとに一意なCSVファイル名を生成し、すべてのログをこのファイルに記録します
 LOG_DIR = os.environ.get("LOG_DIR", ".")
-ARCH_TYPE = os.environ.get("ARCH_TYPE", "Mono")
+RUN_NUM = os.environ.get("RUN_NUM", "0")
 CSV_TIMESTAMP = datetime.now().strftime('%Y%m%d-%H%M%S')
 csv_filename = f"{LOG_DIR}/pod_status-{ARCH_TYPE}-{pause_interval}-{CSV_TIMESTAMP}.csv"
+pod_log_csv = f"{LOG_DIR}/pod_http_log_{ARCH_TYPE}_run_{RUN_NUM}.csv"
 REPLICA=5
 # ---------------------------
 
@@ -305,6 +306,19 @@ def calculate_service_availability(csv_filename, all_deployments):
         service_availability.append(avail)
     return service_availability
 
+def calculate_success_availability(log_csv, deployments):
+    if not os.path.exists(log_csv):
+        return [1.0] * len(deployments)
+    df = pd.read_csv(log_csv)
+    rates = []
+    for dep in deployments:
+        svc_rows = df[df["service"] == dep]
+        total = svc_rows["total"].sum()
+        success = svc_rows["success"].sum()
+        rate = success / total if total > 0 else 1.0
+        rates.append(rate)
+    return rates
+
 # ---------------------------
 # Operator本体：CRD を監視して、最適化アルゴリズムを実行し、結果をCRD statusに反映
 # ---------------------------
@@ -331,7 +345,10 @@ def optimize_appconfig(spec, meta, status, logger, **kwargs):
 
     # === 可用性を前回optimize以降のlogから計算 ===
     service_avail = calculate_service_availability(csv_filename, all_deployments)
+    success_avail = calculate_success_availability(pod_log_csv, all_deployments)
     logger.info(f"Calculated service availabilities: {service_avail}")
+    logger.info(f"HTTP success rates: {success_avail}")
+    # service_avail = success_avail
 
     pause_counts = {dep: 0 for dep in all_deployments}
 

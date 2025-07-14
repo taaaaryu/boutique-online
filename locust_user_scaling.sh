@@ -91,6 +91,7 @@ run_tests_for_architecture() {
     do
         echo "==== $arch_type Run $i/$NUM_RUNS ===="
         LOG_DIR="$arch_dir" ARCH_TYPE="$arch_type" RUN_NUM=$i locust -f "$LOCUSTFILE" --headless -u $user_count -r $SPAWN_RATE --run-time $RUN_TIME --host "$HOST" --logfile "$arch_dir/locust_${arch_type}_run_${i}.log" --csv "$arch_dir/locust_${arch_type}_run_${i}"
+        LOG_DIR="$arch_dir" ARCH_TYPE="$arch_type" RUN_NUM=$i python3 k8s-operator/my-operator/collect_pod_logs.py
         echo "==== Finished $arch_type Run $i ===="
         if [ $i -lt $NUM_RUNS ]; then
             echo "Waiting between test runs..."
