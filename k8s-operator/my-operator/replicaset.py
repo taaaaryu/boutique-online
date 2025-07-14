@@ -348,7 +348,7 @@ def optimize_appconfig(spec, meta, status, logger, **kwargs):
     success_avail = calculate_success_availability(pod_log_csv, all_deployments)
     logger.info(f"Calculated service availabilities: {service_avail}")
     logger.info(f"HTTP success rates: {success_avail}")
-    # service_avail = success_avail
+    service_avail = success_avail
 
     pause_counts = {dep: 0 for dep in all_deployments}
 
