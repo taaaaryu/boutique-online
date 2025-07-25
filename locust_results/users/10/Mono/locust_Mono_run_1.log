@@ -1,6 +1,0 @@
-[2025-07-04 15:22:47,604] taaaaryu-VMware-Virtual-Platform/INFO/locust.main: Run time limit set to 15 seconds
-[2025-07-04 15:22:47,605] taaaaryu-VMware-Virtual-Platform/INFO/locust.main: Starting Locust 
-[2025-07-04 15:22:47,606] taaaaryu-VMware-Virtual-Platform/INFO/locust.runners: Ramping to 10 users at a rate of 10.00 per second
-[2025-07-04 15:22:47,606] taaaaryu-VMware-Virtual-Platform/INFO/locust.runners: All users spawned: {"WebsiteUser": 10} (10 total users)
-[2025-07-04 15:23:02,453] taaaaryu-VMware-Virtual-Platform/INFO/locust.main: --run-time limit reached, shutting down
-[2025-07-04 15:23:02,476] taaaaryu-VMware-Virtual-Platform/INFO/locust.main: Shutting down (exit code 0)

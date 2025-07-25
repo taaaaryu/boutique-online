@@ -14,6 +14,8 @@ import csv
 import os
 import sys  # これも忘れずに！
 from datetime import datetime, timedelta
+import collect_pod_logs
+import importlib.util
 
 
 GENERATION = 10
@@ -28,20 +30,22 @@ pause_counts = {dep: 0 for dep in all_deployments}  # グローバルなpause回
 rm_records = {dep: [] for dep in all_deployments}
 r_adds=[0.75,1,1.25]
 r_add=0.75
-SERVER_AVAILABILITY = 0.99
+SERVER_AVAILABILITY = 0.999
 algo_interval = 600
 kill_interval = 40
 pause_interval = 80
 log_interval = 20
 PROGRAM_START_TIME = datetime.now()
+last_optimize_time = None  # 前回のOptimize時刻を記録
 # pause_intervalごとにファイルを分けるjp:
 # 実行ごとに一意なCSVファイル名を生成し、すべてのログをこのファイルに記録します
 LOG_DIR = os.environ.get("LOG_DIR", ".")
 RUN_NUM = os.environ.get("RUN_NUM", "0")
+ARCH_TYPE = os.environ.get("ARCH_TYPE", "unknown")
 CSV_TIMESTAMP = datetime.now().strftime('%Y%m%d-%H%M%S')
 csv_filename = f"{LOG_DIR}/pod_status-{ARCH_TYPE}-{pause_interval}-{CSV_TIMESTAMP}.csv"
 pod_log_csv = f"{LOG_DIR}/pod_http_log_{ARCH_TYPE}_run_{RUN_NUM}.csv"
-REPLICA=5
+REPLICA=6
 # ---------------------------
 
 
@@ -306,31 +310,89 @@ def calculate_service_availability(csv_filename, all_deployments):
         service_availability.append(avail)
     return service_availability
 
-def calculate_success_availability(log_csv, deployments):
-    if not os.path.exists(log_csv):
-        return [1.0] * len(deployments)
-    df = pd.read_csv(log_csv)
+"""
+def calculate_success_availability(services_dir, deployments, since_time=None):
     rates = []
+    try:
+        config.load_incluster_config()
+    except Exception:
+        config.load_kube_config()
     for dep in deployments:
-        svc_rows = df[df["service"] == dep]
-        total = svc_rows["total"].sum()
-        success = svc_rows["success"].sum()
-        rate = success / total if total > 0 else 1.0
-        rates.append(rate)
+        service_csv = os.path.join(services_dir, f"{dep}.csv")
+        if not os.path.exists(service_csv):
+            rates.append(1.0)
+            continue
+        try:
+            df = pd.read_csv(service_csv)
+            if df.empty or 'timestamp' not in df.columns:
+                rates.append(1.0)
+                continue
+            df['timestamp'] = pd.to_datetime(df['timestamp'])
+            if since_time is not None:
+                df = df[df['timestamp'] >= since_time]
+            if len(df) < 2:
+                rates.append(1.0)
+                continue
+            timestamps = df['timestamp'].unique()
+            if len(timestamps) < 2:
+                rates.append(1.0)
+                continue
+            latest_timestamp = timestamps[-1]
+            previous_timestamp = timestamps[-2]
+            latest_df = df[df['timestamp'] == latest_timestamp]
+            previous_df = df[df['timestamp'] == previous_timestamp]
+            # サービス全体の合計値で差分を取る
+            def sum_counts(df, col):
+                return df[col].sum() if col in df.columns else 0
+            latest_success = sum_counts(latest_df, 'code_200s')
+            previous_success = sum_counts(previous_df, 'code_200s')
+            latest_fail = sum_counts(latest_df, 'code_400s') + sum_counts(latest_df, 'code_500s') + sum_counts(latest_df, 'code_timeout')
+            previous_fail = sum_counts(previous_df, 'code_400s') + sum_counts(previous_df, 'code_500s') + sum_counts(previous_df, 'code_timeout')
+            print(f"{dep}: Latest success: {latest_success}, Previous success: {previous_success}, Latest fail: {latest_fail}, Previous fail: {previous_fail}")
+            success_count = latest_success - previous_success
+            fail_count = latest_fail - previous_fail
+            total_count = success_count + fail_count
+            rate = success_count / total_count if total_count > 0 else 1.0
+            print(f"{dep}: Success count: {success_count}, Fail count: {fail_count}, Rate: {rate}")
+            rates.append(rate)
+        except Exception as e:
+            print(f"Error reading {service_csv}: {e}")
+            rates.append(1.0)
     return rates
+"""
+
+
+
+def collect_pod_logs_timer(spec, logger, **kwargs):
+    """
+    定期的にPodログを収集するタイマー
+    """
+    logger.info("Collecting pod logs...")
+    
+    # ログディレクトリを作成
+    os.makedirs(LOG_DIR, exist_ok=True)
+
+    # 環境変数を設定
+    os.environ['LOG_DIR'] = LOG_DIR
+    os.environ['ARCH_TYPE'] = ARCH_TYPE
+    os.environ['RUN_NUM'] = str(RUN_NUM)
+    os.environ['NAMESPACE'] = NAMESPACE
+    
+    # collect_pod_logs.pyのmain()関数を呼び出し
+    collect_pod_logs.main()
+    logger.info(f"Pod logs collection completed. Files saved to {LOG_DIR}")
+
 
 # ---------------------------
 # Operator本体：CRD を監視して、最適化アルゴリズムを実行し、結果をCRD statusに反映
 # ---------------------------
-@kopf.on.create('myapp.example.com', 'v1alpha1', 'AppConfig')
-def init_pod_status(spec, logger, **kwargs):
-    logger.info("初期化: log_pod_status を一度実行して CSV を作成します")
-    log_pod_status(spec)
 
 @kopf.on.create('myapp.example.com', 'v1alpha1', 'AppConfig')
 @kopf.timer('myapp.example.com', 'v1alpha1', 'AppConfig', interval=algo_interval)
 def optimize_appconfig(spec, meta, status, logger, **kwargs):
-    global service_groups, pause_counts, csv_filename
+    global service_groups, pause_counts, csv_filename, all_redundancy_list, last_optimize_time
+    
+    collect_pod_logs_timer(spec, logger, **kwargs)
 
     namespace = meta.get('namespace', 'default')
     preferences = spec.get('preferences', {})
@@ -343,14 +405,14 @@ def optimize_appconfig(spec, meta, status, logger, **kwargs):
     num_services = len(all_deployments) - 1
     H = (num_services + 1) * REPLICA / 2
 
-    # === 可用性を前回optimize以降のlogから計算 ===
-    service_avail = calculate_service_availability(csv_filename, all_deployments)
-    success_avail = calculate_success_availability(pod_log_csv, all_deployments)
-    logger.info(f"Calculated service availabilities: {service_avail}")
-    logger.info(f"HTTP success rates: {success_avail}")
-    service_avail = success_avail
-
-    pause_counts = {dep: 0 for dep in all_deployments}
+    if not os.path.exists(csv_filename):
+        service_avail = [random.uniform(0.95, 1.0) for i in range(len(all_deployments))]
+    else:
+        # === 可用性を前回optimize以降のlogから計算 =
+        service_avail = calculate_service_availability(csv_filename, all_deployments)
+        logger.info(f"Calculated service availabilities: {service_avail}")
+    # 現在時刻を前回のOptimize時刻として記録
+    last_optimize_time = datetime.now()
 
     # === r_addの値に応じてサービスグループを決定 ===
     logger.info(f"Current r_add value: {r_add}")
@@ -419,7 +481,7 @@ def optimize_appconfig(spec, meta, status, logger, **kwargs):
         except kubernetes.client.exceptions.ApiException as e:
             logger.error(f"Failed to update deployment {deployment}: {e}")
     # === optimize時に拡張CSVログを出力 ===
-    log_pod_status(all_redundancy_list, spec, optimize_flag=1, service_groups=best_solution_list, service_availabilities=service_avail)
+    log_pod_status(spec, optimize_flag=1, service_groups=best_solution_list, service_availabilities=service_avail)
 
 
 
@@ -514,8 +576,11 @@ def get_group_id(service_index):
     return -1
 
 @kopf.timer('myapp.example.com', 'v1alpha1', 'AppConfig', interval=log_interval)
-def log_pod_status(all_redundancy_list, spec, optimize_flag=0, service_groups=None, service_availabilities=None, **kwargs):
-    global paused_pods, csv_filename
+def log_pod_status_timer(spec, logger, **kwargs):
+    log_pod_status(spec, optimize_flag=0, service_groups=None, service_availabilities=None, **kwargs)
+
+def log_pod_status(spec, optimize_flag, service_groups, service_availabilities, **kwargs):
+    global paused_pods, csv_filename, all_redundancy_list
     now = datetime.now()
     now_iso = now.isoformat()
     if datetime.now() - PROGRAM_START_TIME > timedelta(hours=10):
@@ -596,3 +661,5 @@ def log_pod_status(all_redundancy_list, spec, optimize_flag=0, service_groups=No
     with open(csv_filename, 'a', newline='') as f:
         writer = csv.writer(f)
         writer.writerow(row)
+
+

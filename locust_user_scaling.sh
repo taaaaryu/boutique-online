@@ -1,14 +1,14 @@
 #!/bin/bash
 
 # テストするユーザー数のリスト
-USER_COUNTS=(1000 1250 1500 1750 2000 )
+USER_COUNTS=(1500 2000 2500 3000)
 
 # 実行回数を指定
-NUM_RUNS=3
+NUM_RUNS=1
 
 # 各テストのランタイム
 SPAWN_RATE=100
-RUN_TIME="25m"
+RUN_TIME="15m"
 
 # locustfile.pyのパス
 LOCUSTFILE="src/loadgenerator/locustfile.py"
@@ -65,6 +65,17 @@ stop_operator() {
     echo "Operator cleanup completed"
 }
 
+# 関数：Podを初期化
+initialize_pods() {
+    local arch_type=$1
+    echo "==== Initializing pods for $arch_type ===="
+    echo "Deleting all pods..."
+    kubectl delete pod --all --namespace=default --ignore-not-found=true
+    echo "Waiting for pods to be recreated..."
+    sleep 10  # Podの再作成を待つ
+    echo "Pod initialization completed for $arch_type"
+}
+
 # 関数：特定のアーキテクチャでテストを実行
 run_tests_for_architecture() {
     local user_count=$1
@@ -83,6 +94,9 @@ run_tests_for_architecture() {
     # r_addの値を変更
     modify_r_add "$r_add_value"
 
+    # Podを初期化
+    initialize_pods "$arch_type"
+
     # K8s Operatorを開始
     start_operator "$arch_type" "$arch_dir"
 
@@ -91,7 +105,7 @@ run_tests_for_architecture() {
     do
         echo "==== $arch_type Run $i/$NUM_RUNS ===="
         LOG_DIR="$arch_dir" ARCH_TYPE="$arch_type" RUN_NUM=$i locust -f "$LOCUSTFILE" --headless -u $user_count -r $SPAWN_RATE --run-time $RUN_TIME --host "$HOST" --logfile "$arch_dir/locust_${arch_type}_run_${i}.log" --csv "$arch_dir/locust_${arch_type}_run_${i}"
-        LOG_DIR="$arch_dir" ARCH_TYPE="$arch_type" RUN_NUM=$i python3 k8s-operator/my-operator/collect_pod_logs.py
+        #LOG_DIR="$arch_dir" ARCH_TYPE="$arch_type" RUN_NUM=$i python3 k8s-operator/my-operator/collect_pod_logs.py
         echo "==== Finished $arch_type Run $i ===="
         if [ $i -lt $NUM_RUNS ]; then
             echo "Waiting between test runs..."
