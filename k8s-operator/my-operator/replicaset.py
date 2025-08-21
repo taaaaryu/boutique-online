@@ -32,9 +32,9 @@ r_adds=[0.8,1,1.2]
 r_add=1.2
 SERVICE_AVAILABILITY=0.99
 
-KILL_PROBABILITY = 0.0001
+KILL_PROBABILITY = 0.001
 SERVER_AVAILABILITY = 1
-algo_interval = 300
+algo_interval = 150
 kill_interval = 40
 pause_interval = 80
 log_interval = 20
