@@ -18,20 +18,23 @@ import collect_pod_logs
 import importlib.util
 
 
-GENERATION = 10
-NUM_NEXT = 10
-all_deployments = ["adservice", "cartservice", "checkoutservice", "currencyservice", "emailservice", "paymentservice","productcatalogservice", "recommendationservice", "shippingservice"]
+GENERATION = 30
+NUM_START = 50
+NUM_NEXT = 30
+all_deployments = ["frontend", "adservice", "cartservice", "checkoutservice", "currencyservice", "emailservice", "paymentservice","productcatalogservice", "recommendationservice", "shippingservice"]
 NAMESPACE = "default"
-KILL_PROBABILITY = 0.01  # 各サービスがkillされる確率
 paused_pods = {}
 service_groups = []  # グローバルなサービスグループ
 pause_counts = {dep: 0 for dep in all_deployments}  # グローバルなpause回数辞書
 # RM（Resilience Margin）サンプルを蓄積
 rm_records = {dep: [] for dep in all_deployments}
-r_adds=[0.75,1,1.25]
-r_add=0.75
-SERVER_AVAILABILITY = 0.999
-algo_interval = 600
+r_adds=[0.8,1,1.2]
+r_add=1.2
+SERVICE_AVAILABILITY=0.99
+
+KILL_PROBABILITY = 0.0001
+SERVER_AVAILABILITY = 1
+algo_interval = 300
 kill_interval = 40
 pause_interval = 80
 log_interval = 20
@@ -45,7 +48,7 @@ ARCH_TYPE = os.environ.get("ARCH_TYPE", "unknown")
 CSV_TIMESTAMP = datetime.now().strftime('%Y%m%d-%H%M%S')
 csv_filename = f"{LOG_DIR}/pod_status-{ARCH_TYPE}-{pause_interval}-{CSV_TIMESTAMP}.csv"
 pod_log_csv = f"{LOG_DIR}/pod_http_log_{ARCH_TYPE}_run_{RUN_NUM}.csv"
-REPLICA=6
+REPLICA=2.5 # サービスあたりのレプリカ数,リソースに影響あり
 # ---------------------------
 
 
@@ -388,6 +391,10 @@ def collect_pod_logs_timer(spec, logger, **kwargs):
 # ---------------------------
 
 @kopf.on.create('myapp.example.com', 'v1alpha1', 'AppConfig')
+def first_optimize(spec, meta, status, logger, **kwargs):
+    logger.info("AppConfig created")
+    optimize_appconfig(spec, meta, status, logger, **kwargs)
+
 @kopf.timer('myapp.example.com', 'v1alpha1', 'AppConfig', interval=algo_interval)
 def optimize_appconfig(spec, meta, status, logger, **kwargs):
     global service_groups, pause_counts, csv_filename, all_redundancy_list, last_optimize_time
@@ -395,18 +402,17 @@ def optimize_appconfig(spec, meta, status, logger, **kwargs):
     collect_pod_logs_timer(spec, logger, **kwargs)
 
     namespace = meta.get('namespace', 'default')
-    preferences = spec.get('preferences', {})
-    generation = int(preferences.get('generation', GENERATION))
-    NUM_START = int(preferences.get('numStart', 50))
-    max_redundancy = 10
+    
+    max_redundancy = 5
 
     server_avail = SERVER_AVAILABILITY
     service_resource = 1
     num_services = len(all_deployments) - 1
-    H = (num_services + 1) * REPLICA / 2
+    H = (num_services + 1) * REPLICA
 
     if not os.path.exists(csv_filename):
-        service_avail = [random.uniform(0.95, 1.0) for i in range(len(all_deployments))]
+        #service_avail = [random.uniform(0.95, 1.0) for i in range(len(all_deployments))]
+        service_avail = [SERVICE_AVAILABILITY] * len(all_deployments)
     else:
         # === 可用性を前回optimize以降のlogから計算 =
         service_avail = calculate_service_availability(csv_filename, all_deployments)
@@ -419,21 +425,23 @@ def optimize_appconfig(spec, meta, status, logger, **kwargs):
     
     if abs(r_add - 0.75) < 0.01:  # r_add = 0.75 (Mono architecture)
         logger.info("Using Monolithic architecture: All services in one group")
-        # 全サービスを1つのグループに配置
-        best_solution = [[1, 1, 1, 1, 1, 1, 1, 1, 1]]
-        best_solution_list = best_solution
+    
+        best_solution_list = [[1] * len(all_deployments)] #[[1,1,1,1,1,1,1,1,1,1]]
+        best_solution = best_solution_list  # リスト全体を渡す
+        print("Monolithic architecture: best_solution_list:", best_solution_list)
         best_software_count = 1
-        best_RUE = 0.0  # ダミー値
+        best_RUE = 1.0
         
     elif abs(r_add - 1.25) < 0.01:  # r_add = 1.25 (Micro architecture)
         logger.info("Using Microservices architecture: Each service in separate group")
         # 各サービスを個別のグループに配置
-        best_solution = []
+        best_solution_list = []
         for i in range(len(all_deployments)):
             group = [0] * len(all_deployments)
             group[i] = 1
-            best_solution.append(group)
-        best_solution_list = best_solution
+            best_solution_list.append(group)
+        best_solution = best_solution_list  # リスト全体を渡す
+        print("Microservices architecture: best_solution_list:", best_solution_list)
         best_software_count = len(all_deployments)
         best_RUE = 0.0  # ダミー値
         
@@ -441,6 +449,7 @@ def optimize_appconfig(spec, meta, status, logger, **kwargs):
         logger.info("Using Hybrid architecture: Running optimization algorithm")
         # 既存の最適化アルゴリズムを実行
         best_matrices, best_counts, best_RUEs = multi_start_greedy(r_add, service_avail, server_avail, H, num_services, NUM_START)
+        print("Hybrid architecture: best_matrices:", best_matrices[0],best_matrices[1],best_matrices[2])
         best_solution = best_matrices[0]
         best_solution_list = best_solution.tolist() if isinstance(best_solution, np.ndarray) else best_solution
         best_software_count = int(best_counts[0])
@@ -617,7 +626,8 @@ def log_pod_status(spec, optimize_flag, service_groups, service_availabilities, 
         total_expected = all_redundancy_list[dep]
         running_now = status_counts[all_deployments[dep]]["running"]
         paused_now = total_expected - running_now
-        status_counts[all_deployments[dep]]["paused"] += paused_now
+        # pausedの値を0以上に制限し、累積ではなく現在の状態を反映
+        status_counts[all_deployments[dep]]["paused"] = max(0, paused_now)
 
     # === 拡張CSVヘッダー ===
     max_groups = 9  # サービス数分

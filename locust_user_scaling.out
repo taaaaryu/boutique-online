@@ -1,0 +1,77 @@
+==== Starting Locust User Scaling Test with K8s Operator Integration ====
+****************************************
+Starting tests for 2000 users
+****************************************
+========================================
+Starting tests for 2000 users, Mono Architecture \(r_add=0.75\)
+========================================
+Results will be saved in: locust_results/users/num_next_30/2000/Mono
+Modifying r_add to 0.75...
+Modified replicaset.py \(r_add=0.75\)
+==== Initializing pods for Mono ====
+Deleting all pods...
+pod "adservice-8568877bf9-2wgp2" deleted
+pod "cartservice-f84bf7dd4-jxncz" deleted
+pod "checkoutservice-5d9894c787-jm2zr" deleted
+pod "currencyservice-84459c6759-5rwc6" deleted
+pod "emailservice-6fb4dd89fc-stbkd" deleted
+pod "frontend-754cdbf884-dfr2t" deleted
+pod "frontend-754cdbf884-lsrxn" deleted
+pod "paymentservice-5575668b5c-lqmlq" deleted
+pod "productcatalogservice-59cf6fd7b5-kjs7b" deleted
+pod "recommendationservice-589895488f-8fdq2" deleted
+pod "redis-cart-c4fc658fb-vml5d" deleted
+pod "shippingservice-fb4c9695c-fns4x" deleted
+Waiting for pods to be recreated...
+Pod initialization completed for Mono
+==== Starting Kubernetes Operator for Mono ====
+Starting replicaset operator for Mono...
+Operator started with PID: 68129 for Mono
+/home/taaaaryu/lab/microservices-demo/venv/lib/python3.12/site-packages/kopf/_core/reactor/running.py:179: FutureWarning: Absence of either namespaces or cluster-wide flag will become an error soon. For now, switching to the cluster-wide mode for backward compatibility.
+  warnings.warn("Absence of either namespaces or cluster-wide flag will become an error soon."
+[2025-08-12 17:11:07,381] kopf._core.engines.a [INFO    ] Initial authentication has been initiated.
+[2025-08-12 17:11:07,387] kopf.activities.auth [INFO    ] Activity 'login_via_client' succeeded.
+[2025-08-12 17:11:07,387] kopf._core.engines.a [INFO    ] Initial authentication has finished.
+[2025-08-12 17:11:07,503] kopf.objects         [INFO    ] [boutique/microservices-demo] Collecting pod logs...
+[2025-08-12 17:11:07,503] kopf.objects         [WARNING ] [boutique/microservices-demo] service_groups not yet initialized. Skipping this round.
+[2025-08-12 17:11:07,515] kopf.objects         [INFO    ] [boutique/microservices-demo] Timer 'kill_sidecar_timer' succeeded.
+[2025-08-12 17:11:07,545] kopf.objects         [INFO    ] [boutique/microservices-demo] Pod logs collection completed. Files saved to locust_results/users/num_next_30/2000/Mono
+[2025-08-12 17:11:07,546] kopf.objects         [INFO    ] [boutique/microservices-demo] Current r_add value: 0.75
+[2025-08-12 17:11:07,546] kopf.objects         [INFO    ] [boutique/microservices-demo] Using Monolithic architecture: All services in one group
+[2025-08-12 17:11:07,553] kopf.objects         [INFO    ] [boutique/microservices-demo] Optimization result (grouping): best solution matrix: [[1, 1, 1, 1, 1, 1, 1, 1, 1, 1]], software count: 1, all redundancy list: [2, 2, 2, 2, 2, 2, 2, 2, 2, 2]
+[2025-08-12 17:11:07,568] kopf.objects         [INFO    ] [boutique/microservices-demo] Updated deployment: frontend with replicas: 2
+[2025-08-12 17:11:07,575] kopf.objects         [INFO    ] [boutique/microservices-demo] Updated deployment: adservice with replicas: 2
+[2025-08-12 17:11:07,582] kopf.objects         [INFO    ] [boutique/microservices-demo] Updated deployment: cartservice with replicas: 2
+[2025-08-12 17:11:07,604] kopf.objects         [INFO    ] [boutique/microservices-demo] Updated deployment: checkoutservice with replicas: 2
+[2025-08-12 17:11:07,617] kopf.objects         [INFO    ] [boutique/microservices-demo] Collecting pod logs...
+[2025-08-12 17:11:07,619] kopf.objects         [INFO    ] [boutique/microservices-demo] Timer 'log_pod_status_timer' succeeded.
+[2025-08-12 17:11:07,626] kopf.objects         [INFO    ] [boutique/microservices-demo] Updated deployment: currencyservice with replicas: 2
+[2025-08-12 17:11:07,635] kopf.objects         [INFO    ] [boutique/microservices-demo] Updated deployment: emailservice with replicas: 2
+[2025-08-12 17:11:07,654] kopf.objects         [INFO    ] [boutique/microservices-demo] Updated deployment: paymentservice with replicas: 2
+[2025-08-12 17:11:07,667] kopf.objects         [INFO    ] [boutique/microservices-demo] Pod logs collection completed. Files saved to locust_results/users/num_next_30/2000/Mono
+[2025-08-12 17:11:07,672] kopf.objects         [INFO    ] [boutique/microservices-demo] Updated deployment: productcatalogservice with replicas: 2
+[2025-08-12 17:11:07,686] kopf.objects         [INFO    ] [boutique/microservices-demo] Calculated service availabilities: [np.float64(1.0), np.float64(0.5), np.float64(0.5), np.float64(0.5), np.float64(0.5), np.float64(0.5), np.float64(0.5), np.float64(0.5), np.float64(0.5), np.float64(0.5)]
+[2025-08-12 17:11:07,682] kopf.objects         [INFO    ] [boutique/microservices-demo] Updated deployment: recommendationservice with replicas: 2
+[2025-08-12 17:11:07,687] kopf.objects         [INFO    ] [boutique/microservices-demo] Current r_add value: 0.75
+[2025-08-12 17:11:07,688] kopf.objects         [INFO    ] [boutique/microservices-demo] Using Monolithic architecture: All services in one group
+[2025-08-12 17:11:07,688] kopf.objects         [INFO    ] [boutique/microservices-demo] Optimization result (grouping): best solution matrix: [[1, 1, 1, 1, 1, 1, 1, 1, 1, 1]], software count: 1, all redundancy list: [2, 2, 2, 2, 2, 2, 2, 2, 2, 2]
+[2025-08-12 17:11:07,694] kopf.objects         [INFO    ] [boutique/microservices-demo] Updated deployment: shippingservice with replicas: 2
+[2025-08-12 17:11:07,705] kopf.objects         [INFO    ] [boutique/microservices-demo] Updated deployment: frontend with replicas: 2
+[2025-08-12 17:11:07,718] kopf.objects         [INFO    ] [boutique/microservices-demo] Updated deployment: adservice with replicas: 2
+[2025-08-12 17:11:07,723] kopf.objects         [INFO    ] [boutique/microservices-demo] Updated deployment: cartservice with replicas: 2
+[2025-08-12 17:11:07,737] kopf.objects         [INFO    ] [boutique/microservices-demo] Updated deployment: checkoutservice with replicas: 2
+[2025-08-12 17:11:07,753] kopf.objects         [INFO    ] [boutique/microservices-demo] Timer 'optimize_appconfig' succeeded.
+[2025-08-12 17:11:07,756] kopf.objects         [INFO    ] [boutique/microservices-demo] Updated deployment: currencyservice with replicas: 2
+[2025-08-12 17:11:07,761] kopf.objects         [INFO    ] [boutique/microservices-demo] Updated deployment: emailservice with replicas: 2
+[2025-08-12 17:11:07,765] kopf.objects         [INFO    ] [boutique/microservices-demo] Updated deployment: paymentservice with replicas: 2
+[2025-08-12 17:11:07,769] kopf.objects         [INFO    ] [boutique/microservices-demo] Updated deployment: productcatalogservice with replicas: 2
+[2025-08-12 17:11:07,773] kopf.objects         [INFO    ] [boutique/microservices-demo] Updated deployment: recommendationservice with replicas: 2
+[2025-08-12 17:11:07,777] kopf.objects         [INFO    ] [boutique/microservices-demo] Updated deployment: shippingservice with replicas: 2
+[2025-08-12 17:11:07,848] kopf.objects         [INFO    ] [boutique/microservices-demo] Handler 'optimize_appconfig' succeeded.
+[2025-08-12 17:11:07,849] kopf.objects         [INFO    ] [boutique/microservices-demo] Creation is processed: 1 succeeded; 0 failed.
+==== Mono Run 1/1 ====
+Type     Name                                                                          # reqs      # fails |    Avg     Min     Max    Med |   req/s  failures/s
+--------|----------------------------------------------------------------------------|-------|-------------|-------|-------|-------|-------|--------|-----------
+--------|----------------------------------------------------------------------------|-------|-------------|-------|-------|-------|-------|--------|-----------
+         Aggregated                                                                         0     0(0.00%) |      0       0       0      0 |    0.00        0.00
+

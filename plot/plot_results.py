@@ -14,8 +14,11 @@ from pathlib import Path
 # 日本語フォント設定
 plt.rcParams['font.family'] = 'DejaVu Sans'
 plt.rcParams['axes.unicode_minus'] = False
+LOAD_PATH = "locust_results/users/diffrent_svc_avail" #csvファイルのパス
+PATH = "locust_results/users/result_figures/diffrent_svc_avail" #結果の保存先
+USER_COUNTS = [2000, 2500, 3000]
 
-def load_request_logs(base_dir="locust_results/change_users"):
+def load_request_logs(base_dir=LOAD_PATH):
     """
     各ユーザー数、実装形態のrequest_log.csvファイルを読み込んでレスポンス時間分布を分析
     """
@@ -23,7 +26,7 @@ def load_request_logs(base_dir="locust_results/change_users"):
     failure_distribution_data = []
     
     # ユーザー数のリスト
-    user_counts = [1250, 1500, 1750]
+    user_counts = USER_COUNTS
     # 実装形態のリスト
     architectures = ['Mono', 'Hybrid', 'Micro']
     
@@ -150,7 +153,7 @@ def plot_response_time_distributions(distribution_data):
         ax.grid(True, alpha=0.3)
     
     plt.tight_layout()
-    plt.savefig('response_time_distributions.png', dpi=300, bbox_inches='tight')
+    plt.savefig(f"{PATH}/response_time_distributions.png", dpi=300, bbox_inches='tight')
     plt.show()
 
 def plot_percentile_comparison(distribution_data):
@@ -198,7 +201,7 @@ def plot_percentile_comparison(distribution_data):
         ax.grid(True, alpha=0.3)
     
     plt.tight_layout()
-    plt.savefig('response_time_percentiles.png', dpi=300, bbox_inches='tight')
+    plt.savefig(f"{PATH}/response_time_percentiles.png", dpi=300, bbox_inches='tight')
     plt.show()
 
 def plot_architecture_comparison_by_user_count(distribution_data):
@@ -237,7 +240,7 @@ def plot_architecture_comparison_by_user_count(distribution_data):
         ax.grid(True, alpha=0.3)
     
     plt.tight_layout()
-    plt.savefig('architecture_comparison_by_user_count.png', dpi=300, bbox_inches='tight')
+    plt.savefig(f"{PATH}/architecture_comparison_by_user_count.png", dpi=300, bbox_inches='tight')
     plt.show()
 
 def plot_failure_response_time_distributions(failure_distribution_data):
@@ -305,7 +308,7 @@ def plot_failure_response_time_distributions(failure_distribution_data):
         ax.grid(True, alpha=0.3)
     
     plt.tight_layout()
-    plt.savefig('failure_response_time_distributions.png', dpi=300, bbox_inches='tight')
+    plt.savefig(f"{PATH}/failure_response_time_distributions.png", dpi=300, bbox_inches='tight')
     plt.show()
 
 def plot_failure_architecture_comparison_by_user_count(failure_distribution_data):
@@ -344,7 +347,7 @@ def plot_failure_architecture_comparison_by_user_count(failure_distribution_data
         ax.grid(True, alpha=0.3)
     
     plt.tight_layout()
-    plt.savefig('failure_architecture_comparison_by_user_count.png', dpi=300, bbox_inches='tight')
+    plt.savefig(f"{PATH}/failure_architecture_comparison_by_user_count.png", dpi=300, bbox_inches='tight')
     plt.show()
 
 def print_distribution_summary(distribution_data):
@@ -396,14 +399,14 @@ def load_stats_data(base_dir="locust_results/change_users"):
     data = []
     
     # ユーザー数のリスト
-    user_counts = [1250, 1500, 1750]
+    user_counts = USER_COUNTS
     # 実装形態のリスト
     architectures = ['Mono', 'Hybrid', 'Micro']
     
     for user_count in user_counts:
         for arch in architectures:
             # 各実装形態のディレクトリパス
-            arch_dir = Path(base_dir) / str(user_count) / arch
+            arch_dir = Path(LOAD_PATH) / str(user_count) / arch
             
             # stats.csvファイルを検索
             stats_files = list(arch_dir.glob("*stats.csv"))
@@ -484,7 +487,7 @@ def plot_results(df):
     ax2.set_ylim(0, 105)  # 成功率は0-100%の範囲
     
     plt.tight_layout()
-    plt.savefig('locust_results_analysis.png', dpi=300, bbox_inches='tight')
+    plt.savefig(f"{PATH}/locust_results_analysis.png", dpi=300, bbox_inches='tight')
     plt.show()
 
 def print_summary(df):
