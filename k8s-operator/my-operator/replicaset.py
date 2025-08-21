@@ -18,11 +18,13 @@ import collect_pod_logs
 import importlib.util
 
 
+
 GENERATION = 30
 NUM_START = 50
 NUM_NEXT = 30
 all_deployments = ["frontend", "adservice", "cartservice", "checkoutservice", "currencyservice", "emailservice", "paymentservice","productcatalogservice", "recommendationservice", "shippingservice"]
 NAMESPACE = "default"
+
 paused_pods = {}
 service_groups = []  # グローバルなサービスグループ
 pause_counts = {dep: 0 for dep in all_deployments}  # グローバルなpause回数辞書
@@ -44,11 +46,13 @@ last_optimize_time = None  # 前回のOptimize時刻を記録
 # 実行ごとに一意なCSVファイル名を生成し、すべてのログをこのファイルに記録します
 LOG_DIR = os.environ.get("LOG_DIR", ".")
 RUN_NUM = os.environ.get("RUN_NUM", "0")
+
 ARCH_TYPE = os.environ.get("ARCH_TYPE", "unknown")
 CSV_TIMESTAMP = datetime.now().strftime('%Y%m%d-%H%M%S')
 csv_filename = f"{LOG_DIR}/pod_status-{ARCH_TYPE}-{pause_interval}-{CSV_TIMESTAMP}.csv"
 pod_log_csv = f"{LOG_DIR}/pod_http_log_{ARCH_TYPE}_run_{RUN_NUM}.csv"
 REPLICA=2.5 # サービスあたりのレプリカ数,リソースに影響あり
+
 # ---------------------------
 
 
@@ -402,8 +406,10 @@ def optimize_appconfig(spec, meta, status, logger, **kwargs):
     collect_pod_logs_timer(spec, logger, **kwargs)
 
     namespace = meta.get('namespace', 'default')
+
     
     max_redundancy = 5
+
 
     server_avail = SERVER_AVAILABILITY
     service_resource = 1
@@ -419,6 +425,7 @@ def optimize_appconfig(spec, meta, status, logger, **kwargs):
         logger.info(f"Calculated service availabilities: {service_avail}")
     # 現在時刻を前回のOptimize時刻として記録
     last_optimize_time = datetime.now()
+
 
     # === r_addの値に応じてサービスグループを決定 ===
     logger.info(f"Current r_add value: {r_add}")

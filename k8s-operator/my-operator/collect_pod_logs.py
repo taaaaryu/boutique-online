@@ -4,8 +4,10 @@ import re
 from datetime import datetime
 from kubernetes import client, config
 
+
 LOG_DIR = os.environ.get("LOG_DIR", "pod_logs")
 SERVICE_DIR = os.path.join(LOG_DIR, "services")
+
 ARCH_TYPE = os.environ.get("ARCH_TYPE", "unknown")
 RUN_NUM = os.environ.get("RUN_NUM", "0")
 NAMESPACE = os.environ.get("NAMESPACE", "default")
@@ -105,6 +107,7 @@ def main():
                 row = [now, pod_name, code_100s, code_200s, code_400s, code_500s, code_other, code_timeout]
                 writer.writerow(row)
         print(f"{service} のログを {file_path} に追加しました ({len(pod_list)} ポッド)")
+
 
 if __name__ == "__main__":
     main()
