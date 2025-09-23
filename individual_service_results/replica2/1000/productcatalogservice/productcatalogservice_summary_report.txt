@@ -1,0 +1,26 @@
+=== Test Summary Report ===
+Service: productcatalogservice
+User Count: 1000
+Replica Count: 2
+Test Duration: 300 seconds
+Timestamp: 2025-09-22T15:28:26.876678
+
+=== System Metrics Summary ===
+Max CPU Usage: 8.11%
+Avg CPU Usage: 6.84%
+Max Memory Usage: 23.00%
+Avg Memory Usage: 22.45%
+Max Network RX: 11674.82 bytes/sec
+Max Network TX: 172323.11 bytes/sec
+
+=== Load Test Metrics Summary ===
+Total Requests: 70,032
+Total Failures: 0
+Overall Success Rate: 100.00%
+Average Response Time: 1705.48 ms
+Max Response Time: 3967.81 ms
+Average Requests/sec: 116.98
+Max Requests/sec: 116.98
+
+=== Per-Endpoint Performance ===
+/: 100.00% success, 1705.48ms avg

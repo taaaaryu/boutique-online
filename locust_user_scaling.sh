@@ -14,7 +14,7 @@ RUN_TIME="10m"
 LOCUSTFILE="src/loadgenerator/locustfile.py"
 
 # テスト対象のホストURL
-HOST="http://172.18.0.3:30957"
+HOST="http://172.18.0.3:8080"
 
 # K8s Operatorのパス
 OPERATOR_PATH_RANDOM="k8s-operator/my-operator/replicaset_random.py"

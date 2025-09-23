@@ -30,3 +30,5 @@ obj/
 pkg/
 release/wi-kubernetes-manifests.yaml
 vendor/
+each_test/individual_service_results/*
+venv/
