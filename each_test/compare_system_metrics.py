@@ -36,14 +36,16 @@ rcParams.update({
 
 
 RESULTS_PATTERN = re.compile(r"replica(\d+)" + re.escape(os.sep) + r"(\d+)" + re.escape(os.sep) + r"([^/\\]+)")
+RUN_PATTERN = re.compile(r"_run(\d+)\.csv$")
 
 
-def find_system_metric_files(root_dir: str, service_filter: Optional[str] = None) -> List[Tuple[str, str, int, int]]:
+def find_system_metric_files(root_dir: str, service_filter: Optional[str] = None) -> List[Tuple[str, str, int, int, Optional[int]]]:
     """Find all system metrics CSV files under root.
 
-    Returns list of tuples: (file_path, service, replicas, users)
+    Returns list of tuples: (file_path, service, replicas, users, run_number)
+    run_number is None if not found in filename
     """
-    matches: List[Tuple[str, str, int, int]] = []
+    matches: List[Tuple[str, str, int, int, Optional[int]]] = []
     for dirpath, _dirnames, filenames in os.walk(root_dir):
         rel = os.path.relpath(dirpath, root_dir)
         m = RESULTS_PATTERN.search(rel)
@@ -55,14 +57,11 @@ def find_system_metric_files(root_dir: str, service_filter: Optional[str] = None
         if service_filter and service != service_filter:
             continue
         for fn in filenames:
-            if fn.endswith('_system_metrics_'):
-                # unlikely, guard
-                continue
-            if fn.endswith('.csv') and fn.endswith('_system_metrics_' + fn.split('_system_metrics_')[-1]):
-                # generic guard
-                pass
-            if fn.endswith('.csv') and '_system_metrics_' in fn:
-                matches.append((os.path.join(dirpath, fn), service, replicas, users))
+            if fn.endswith('.csv') and ('_system_metrics_full' in fn or fn.startswith('system_metrics_full')):
+                # Extract run number if present
+                run_match = RUN_PATTERN.search(fn)
+                run_num = int(run_match.group(1)) if run_match else None
+                matches.append((os.path.join(dirpath, fn), service, replicas, users, run_num))
     return matches
 
 
@@ -94,7 +93,7 @@ def summarize_file(csv_path: str) -> Dict[str, float]:
     # Optional: time span
     if 'timestamp' in df.columns and len(df):
         try:
-            ts = pd.to_datetime(df['timestamp'])
+            ts = pd.to_datetime(df['timestamp'], format='ISO8601')
             summary['timespan_seconds'] = float((ts.max() - ts.min()).total_seconds())
         except Exception:
             summary['timespan_seconds'] = 0.0
@@ -103,17 +102,78 @@ def summarize_file(csv_path: str) -> Dict[str, float]:
     return summary
 
 
+def summarize_multiple_files(csv_paths: List[str]) -> Dict[str, float]:
+    """Compute aggregate stats from multiple run files (e.g., run1~run5).
+    
+    Returns mean and std for each metric across runs.
+    """
+    all_stats = []
+    for path in csv_paths:
+        stats = summarize_file(path)
+        all_stats.append(stats)
+    
+    if not all_stats:
+        return {}
+    
+    # Compute mean and std across runs
+    result = {}
+    metric_keys = [
+        'cpu_usage_percent_avg', 'cpu_usage_percent_max',
+        'cpu_throttle_avg', 'cpu_throttle_max',
+        'mem_usage_percent_avg', 'mem_usage_percent_max',
+        'net_rx_avg', 'net_rx_max',
+        'net_tx_avg', 'net_tx_max',
+        'timespan_seconds'
+    ]
+    
+    for key in metric_keys:
+        values = [s.get(key, 0.0) for s in all_stats]
+        result[key] = float(np.mean(values))
+        result[f'{key}_std'] = float(np.std(values, ddof=1)) if len(values) > 1 else 0.0
+    
+    result['run_count'] = len(all_stats)
+    result['rows'] = int(np.mean([s.get('rows', 0) for s in all_stats]))
+    
+    return result
+
+
 def build_comparison(root_dir: str, service_filter: Optional[str] = None) -> pd.DataFrame:
     rows: List[Dict] = []
     files = find_system_metric_files(root_dir, service_filter)
-    for csv_path, service, replicas, users in sorted(files):
-        stats = summarize_file(csv_path)
+    
+    # Group files by (service, replicas, users)
+    from collections import defaultdict
+    grouped = defaultdict(list)
+    for csv_path, service, replicas, users, run_num in files:
+        key = (service, replicas, users)
+        grouped[key].append((csv_path, run_num))
+    
+    # Process each group
+    for (service, replicas, users), file_list in sorted(grouped.items()):
+        # Sort by run number (None comes first)
+        file_list.sort(key=lambda x: (x[1] is None, x[1] if x[1] is not None else 0))
+        csv_paths = [path for path, _ in file_list]
+        
+        # Compute stats across multiple runs
+        if len(csv_paths) > 1:
+            stats = summarize_multiple_files(csv_paths)
+            file_str = f'{len(csv_paths)} runs'
+        else:
+            stats = summarize_file(csv_paths[0])
+            stats['run_count'] = 1
+            # Add _std columns with 0 for single run
+            for key in list(stats.keys()):
+                if key not in ['rows', 'run_count']:
+                    stats[f'{key}_std'] = 0.0
+            file_str = os.path.basename(csv_paths[0])
+        
         # Try read success rate from sibling *_results_stats.csv (Aggregated row)
+        # Use first file's directory
         req_count = None
         fail_count = None
         success_rate = None
         try:
-            base_dir = os.path.dirname(csv_path)
+            base_dir = os.path.dirname(csv_paths[0])
             cand = [fn for fn in os.listdir(base_dir) if fn.endswith('_results_stats.csv')]
             if cand:
                 # use latest
@@ -129,11 +189,12 @@ def build_comparison(root_dir: str, service_filter: Optional[str] = None) -> pd.
                     success_rate = (req_count - fail_count) / req_count * 100.0
         except Exception:
             pass
+        
         row = {
             'service': service,
             'replicas': replicas,
             'users': users,
-            'file': os.path.basename(csv_path),
+            'file': file_str,
         }
         row.update(stats)
         if req_count is not None:
@@ -148,8 +209,8 @@ def build_comparison(root_dir: str, service_filter: Optional[str] = None) -> pd.
 
 def _list_service_matrix(root_dir: str, service: str) -> Tuple[List[int], List[int]]:
     files = find_system_metric_files(root_dir, service)
-    replicas = sorted({rep for _p, _s, rep, _u in files})
-    users = sorted({u for _p, _s, _r, u in files})
+    replicas = sorted({rep for _p, _s, rep, _u, _r in files})
+    users = sorted({u for _p, _s, _r, u, _rn in files})
     return replicas, users
 
 
@@ -158,9 +219,13 @@ def _load_timeseries_avg(root_dir: str, service: str, replicas: int, users: int,
     base_dir = os.path.join(root_dir, f'replica{replicas}', str(users), service)
     if not os.path.isdir(base_dir):
         return None
-    candidates = [fn for fn in os.listdir(base_dir) if fn.endswith('.csv') and '_system_metrics_' in fn]
+    candidates = [fn for fn in os.listdir(base_dir) if fn.endswith('.csv') and ('_system_metrics_full' in fn or fn.startswith('system_metrics_full_'))]
     if not candidates:
         return None
+    # Prioritize system_metrics_full_*.csv files (have all columns)
+    full_files = [fn for fn in candidates if fn.startswith('system_metrics_full_')]
+    if full_files:
+        candidates = full_files
     # pick latest by timestamp in filename or mtime
     candidates.sort(key=lambda fn: os.path.getmtime(os.path.join(base_dir, fn)), reverse=True)
     path = os.path.join(base_dir, candidates[0])
@@ -171,7 +236,7 @@ def _load_timeseries_avg(root_dir: str, service: str, replicas: int, users: int,
         # Exclude ALL_PODS from per-pod averages
         if 'pod_name' in df.columns:
             df = df[df['pod_name'] != 'ALL_PODS']
-        df['timestamp'] = pd.to_datetime(df['timestamp'])
+        df['timestamp'] = pd.to_datetime(df['timestamp'], format='ISO8601')
         # average across pods for each timestamp
         df_avg = df.groupby('timestamp', as_index=False)[metric].mean()
         return df_avg
@@ -184,9 +249,13 @@ def _load_timeseries_by_pods(root_dir: str, service: str, replicas: int, users: 
     base_dir = os.path.join(root_dir, f'replica{replicas}', str(users), service)
     if not os.path.isdir(base_dir):
         return {}
-    candidates = [fn for fn in os.listdir(base_dir) if fn.endswith('.csv') and '_system_metrics_' in fn]
+    candidates = [fn for fn in os.listdir(base_dir) if fn.endswith('.csv') and ('_system_metrics_full' in fn or fn.startswith('system_metrics_full_'))]
     if not candidates:
         return {}
+    # Prioritize system_metrics_full_*.csv files (have all columns)
+    full_files = [fn for fn in candidates if fn.startswith('system_metrics_full_')]
+    if full_files:
+        candidates = full_files
     # pick latest by timestamp in filename or mtime
     candidates.sort(key=lambda fn: os.path.getmtime(os.path.join(base_dir, fn)), reverse=True)
     path = os.path.join(base_dir, candidates[0])
@@ -194,7 +263,7 @@ def _load_timeseries_by_pods(root_dir: str, service: str, replicas: int, users: 
         df = pd.read_csv(path)
         if 'timestamp' not in df.columns or metric not in df.columns or 'pod_name' not in df.columns:
             return {}
-        df['timestamp'] = pd.to_datetime(df['timestamp'])
+        df['timestamp'] = pd.to_datetime(df['timestamp'], format='ISO8601')
         
         # Group by pod_name and return individual pod data (exclude ALL_PODS)
         pod_data = {}
@@ -214,9 +283,13 @@ def _load_timeseries_total(root_dir: str, service: str, replicas: int, users: in
     base_dir = os.path.join(root_dir, f'replica{replicas}', str(users), service)
     if not os.path.isdir(base_dir):
         return None
-    candidates = [fn for fn in os.listdir(base_dir) if fn.endswith('.csv') and '_system_metrics_' in fn]
+    candidates = [fn for fn in os.listdir(base_dir) if fn.endswith('.csv') and ('_system_metrics_full' in fn or fn.startswith('system_metrics_full_') or fn.startswith('system_metrics_'))]
     if not candidates:
         return None
+    # Prioritize system_metrics_full_*.csv files (have all columns)
+    full_files = [fn for fn in candidates if fn.startswith('system_metrics_full_')]
+    if full_files:
+        candidates = full_files
     # pick latest by timestamp in filename or mtime
     candidates.sort(key=lambda fn: os.path.getmtime(os.path.join(base_dir, fn)), reverse=True)
     path = os.path.join(base_dir, candidates[0])
@@ -224,7 +297,7 @@ def _load_timeseries_total(root_dir: str, service: str, replicas: int, users: in
         df = pd.read_csv(path)
         if 'timestamp' not in df.columns or metric not in df.columns:
             return None
-        df['timestamp'] = pd.to_datetime(df['timestamp'])
+        df['timestamp'] = pd.to_datetime(df['timestamp'], format='ISO8601')
         # sum across pods for each timestamp
         df_total = df.groupby('timestamp', as_index=False)[metric].sum()
         return df_total
@@ -255,9 +328,10 @@ def _linestyle_for_replicas(replicas: int) -> str:
 
 
 
-def generate_metric_specific_overview(df: pd.DataFrame, service: str, outdir: str, metric_col: str) -> List[str]:
-    """Create metric-specific overview with 2 subplots: metric vs users (top), success rate vs users (bottom).
-    Each subplot shows multiple replica lines.
+def generate_metric_specific_overview(root_dir: str, df: pd.DataFrame, service: str, outdir: str, metric_col: str) -> List[str]:
+    """Create metric-specific overview with 2 subplots: metric boxplot (top), success rate line chart (bottom).
+    Top subplot shows boxplot for each (replicas, users) combination using all data points from all runs.
+    Bottom subplot shows success rate as line chart grouped by replicas.
     """
     os.makedirs(outdir, exist_ok=True)
     saved: List[str] = []
@@ -265,47 +339,115 @@ def generate_metric_specific_overview(df: pd.DataFrame, service: str, outdir: st
     if sdf.empty:
         return saved
 
-    have_metric = metric_col in sdf.columns
     have_sr = 'success_rate_percent' in sdf.columns
-    if not (have_metric or have_sr):
+    
+    # Extract the base metric name (remove _avg suffix if present)
+    base_metric = metric_col.replace('_avg', '').replace('_max', '')
+    
+    # Get all files for this service to collect raw data
+    files = find_system_metric_files(root_dir, service)
+    if not files:
         return saved
-
-    replicas = sorted(sdf['replicas'].unique())
-    users = sorted(sdf['users'].unique())
-
-    # Create 2-subplot figure: metric (top) and success rate (bottom)
-    fig, axes = plt.subplots(2, 1, figsize=(12, 8), sharex=True)
     
-    # Top subplot: metric vs users
-    if have_metric:
-        ax = axes[0]
-        for idx, rep in enumerate(replicas):
-            sub = sdf[sdf['replicas'] == rep]
-            y = [sub[sub['users'] == u][metric_col].mean() if not sub[sub['users'] == u].empty else np.nan for u in users]
-            ax.plot(users, y, label=f'replicas={rep}', linestyle=_linestyle_for_index(idx), marker='o', alpha=0.9)
-        ylabel = metric_col.replace('_', ' ')
-        ax.set_ylabel(ylabel)
-        ax.grid(alpha=0.3)
-        ax.legend(ncol=2)
+    # Group files by (replicas, users)
+    from collections import defaultdict
+    grouped = defaultdict(list)
+    for csv_path, svc, replicas, users, run_num in files:
+        if svc == service:
+            key = (replicas, users)
+            grouped[key].append(csv_path)
     
-    # Bottom subplot: success rate vs users
+    if not grouped:
+        return saved
+    
+    # Sort keys for consistent ordering
+    sorted_keys = sorted(grouped.keys())
+    
+    # Collect all data points for boxplot
+    boxplot_data = []
+    labels = []
+    replica_for_each_box = []
+    
+    for replicas, users in sorted_keys:
+        csv_paths = grouped[(replicas, users)]
+        all_values = []
+        
+        # Read all CSVs for this combination and collect all data points
+        for csv_path in csv_paths:
+            try:
+                df_csv = pd.read_csv(csv_path)
+                if base_metric not in df_csv.columns:
+                    continue
+                
+                # Exclude ALL_PODS if pod_name column exists
+                if 'pod_name' in df_csv.columns:
+                    df_csv = df_csv[df_csv['pod_name'] != 'ALL_PODS']
+                
+                # Collect all values from this CSV
+                values = df_csv[base_metric].dropna().tolist()
+                all_values.extend(values)
+            except Exception:
+                continue
+        
+        if all_values:
+            boxplot_data.append(all_values)
+            labels.append(f'R{replicas}\nU{users}')
+            replica_for_each_box.append(replicas)
+        else:
+            boxplot_data.append([])
+            labels.append(f'R{replicas}\nU{users}')
+            replica_for_each_box.append(replicas)
+    
+    if not boxplot_data or all(len(d) == 0 for d in boxplot_data):
+        return saved
+    
+    # Create 2-subplot figure: boxplot (top) and success rate (bottom)
+    fig, axes = plt.subplots(2, 1, figsize=(max(12, len(labels) * 1.2), 10))
+    
+    # Top subplot: boxplot
+    ax = axes[0]
+    bp = ax.boxplot(boxplot_data, labels=labels, patch_artist=True)
+    
+    # Color boxes by replica count
+    replica_colors = {1: 'lightblue', 2: 'lightgreen', 3: 'lightyellow', 4: 'lightcoral'}
+    for i, replicas in enumerate(replica_for_each_box):
+        color = replica_colors.get(replicas, 'lightgray')
+        bp['boxes'][i].set_facecolor(color)
+        bp['boxes'][i].set_alpha(0.7)
+    
+    ylabel = base_metric.replace('_', ' ')
+    ax.set_ylabel(ylabel)
+    ax.set_title(f'{base_metric.replace("_", " ").title()} Distribution (All Runs)')
+    ax.grid(axis='y', alpha=0.3)
+    
+    # Rotate labels if too many
+    if len(labels) > 10:
+        plt.setp(ax.xaxis.get_majorticklabels(), rotation=45, ha='right')
+    
+    # Bottom subplot: success rate vs users (line chart)
     if have_sr:
         ax = axes[1]
-        for idx, rep in enumerate(replicas):
+        replicas_list = sorted(sdf['replicas'].unique())
+        users_list = sorted(sdf['users'].unique())
+        
+        for idx, rep in enumerate(replicas_list):
             sub = sdf[sdf['replicas'] == rep]
-            y = [sub[sub['users'] == u]['success_rate_percent'].mean() if not sub[sub['users'] == u].empty else np.nan for u in users]
-            ax.plot(users, y, label=f'replicas={rep}', linestyle=_linestyle_for_index(idx), marker='o', alpha=0.9)
-        ax.set_xlabel('users')
+            y = [sub[sub['users'] == u]['success_rate_percent'].mean() if not sub[sub['users'] == u].empty else np.nan for u in users_list]
+            ax.plot(users_list, y, label=f'replicas={rep}', linestyle=_linestyle_for_index(idx), marker='o', alpha=0.9)
+        ax.set_xlabel('Users')
         ax.set_ylabel('Success rate (%)')
         ax.set_ylim(0, 100)
         ax.grid(alpha=0.3)
         ax.legend(ncol=2)
+    else:
+        # If no success rate data, hide bottom subplot
+        axes[1].axis('off')
     
-    fig.suptitle(f'{service} - {metric_col.replace("_", " ").title()} vs Users')
+    fig.suptitle(f'{service} - {base_metric.replace("_", " ").title()} Overview')
     fig.tight_layout(rect=[0, 0, 1, 0.96])
     
     # Generate filename based on metric
-    metric_name = metric_col.replace('_avg', '').replace('_', '_')
+    metric_name = base_metric.replace('_', '_')
     path = os.path.join(outdir, f'{service}_{metric_name}_overview.png')
     fig.savefig(path, dpi=200)
     plt.close(fig)
@@ -471,8 +613,104 @@ def generate_overall_trend_plots(root_dir: str, service: str, outdir: str) -> Li
     return saved
 
 
+def generate_boxplot_overview(root_dir: str, service: str, outdir: str, metric: str) -> List[str]:
+    """Create boxplot overview: one box per (replicas, users) combination showing distribution across all data points.
+    
+    Each box represents all timestamp data from all runs for that specific (replicas, users) combination.
+    """
+    os.makedirs(outdir, exist_ok=True)
+    saved: List[str] = []
+    
+    files = find_system_metric_files(root_dir, service)
+    if not files:
+        return saved
+    
+    # Group files by (replicas, users)
+    from collections import defaultdict
+    grouped = defaultdict(list)
+    for csv_path, svc, replicas, users, run_num in files:
+        if svc == service:
+            key = (replicas, users)
+            grouped[key].append(csv_path)
+    
+    if not grouped:
+        return saved
+    
+    # Sort keys for consistent ordering
+    sorted_keys = sorted(grouped.keys())
+    
+    # Collect all data points for each (replicas, users) combination
+    boxplot_data = []
+    labels = []
+    
+    for replicas, users in sorted_keys:
+        csv_paths = grouped[(replicas, users)]
+        all_values = []
+        
+        # Read all CSVs for this combination and collect all data points
+        for csv_path in csv_paths:
+            try:
+                df = pd.read_csv(csv_path)
+                if metric not in df.columns:
+                    continue
+                
+                # Exclude ALL_PODS if pod_name column exists
+                if 'pod_name' in df.columns:
+                    df = df[df['pod_name'] != 'ALL_PODS']
+                
+                # Collect all values from this CSV
+                values = df[metric].dropna().tolist()
+                all_values.extend(values)
+            except Exception as e:
+                print(f"Warning: Failed to read {csv_path}: {e}")
+                continue
+        
+        if all_values:
+            boxplot_data.append(all_values)
+            labels.append(f'R{replicas}\nU{users}')
+        else:
+            # Add empty list to maintain alignment
+            boxplot_data.append([])
+            labels.append(f'R{replicas}\nU{users}')
+    
+    if not boxplot_data or all(len(d) == 0 for d in boxplot_data):
+        print(f"No data found for {service} - {metric}")
+        return saved
+    
+    # Create boxplot
+    fig, ax = plt.subplots(1, 1, figsize=(max(12, len(labels) * 1.5), 6))
+    
+    bp = ax.boxplot(boxplot_data, labels=labels, patch_artist=True)
+    
+    # Color boxes by replica count
+    replica_colors = {1: 'lightblue', 2: 'lightgreen', 3: 'lightyellow', 4: 'lightcoral'}
+    for i, (replicas, users) in enumerate(sorted_keys):
+        color = replica_colors.get(replicas, 'lightgray')
+        bp['boxes'][i].set_facecolor(color)
+        bp['boxes'][i].set_alpha(0.7)
+    
+    ax.set_xlabel('(Replicas, Users)')
+    ax.set_ylabel(metric.replace('_', ' '))
+    ax.set_title(f'{service} - {metric.replace("_", " ").title()} Distribution (All Runs)')
+    ax.grid(axis='y', alpha=0.3)
+    
+    # Rotate labels if too many
+    if len(labels) > 10:
+        plt.setp(ax.xaxis.get_majorticklabels(), rotation=45, ha='right')
+    
+    fig.tight_layout()
+    
+    path = os.path.join(outdir, f'{service}_{metric}_boxplot.png')
+    fig.savefig(path, dpi=200)
+    plt.close(fig)
+    saved.append(path)
+    
+    print(f"Generated boxplot: {path}")
+    return saved
+
+
 def generate_allpods_overview(root_dir: str, service: str, outdir: str, metric: str) -> List[str]:
-    """Create ALL_PODS overview: metric vs users, one line per replica count (styles by replicas)."""
+    """Create ALL_PODS overview: metric vs users, one line per replica count with error bars (styles by replicas)."""
     os.makedirs(outdir, exist_ok=True)
     saved: List[str] = []
 
@@ -480,38 +718,104 @@ def generate_allpods_overview(root_dir: str, service: str, outdir: str, metric: 
     if not files:
         return saved
 
-    replicas_list = sorted({replicas for _p, _s, replicas, _u in files})
-    users_list = sorted({users for _p, _s, _r, users in files})
+    replicas_list = sorted({replicas for _p, _s, replicas, _u, _rn in files})
+    users_list = sorted({users for _p, _s, _r, users, _rn in files})
+    
+    print(f"DEBUG: replicas_list = {replicas_list}")
+    print(f"DEBUG: users_list = {users_list}")
 
     fig, ax = plt.subplots(1, 1, figsize=(12, 6))
 
     for replicas in replicas_list:
         y_values: List[float] = []
+        y_errors: List[float] = []
+        print(f"DEBUG: Processing replicas={replicas}")
         for users in users_list:
             base_dir = os.path.join(root_dir, f'replica{replicas}', str(users), service)
+            print(f"DEBUG: Checking base_dir={base_dir}, exists={os.path.isdir(base_dir)}")
             if not os.path.isdir(base_dir):
                 y_values.append(np.nan)
+                y_errors.append(0.0)
                 continue
-            candidates = [fn for fn in os.listdir(base_dir) if fn.endswith('.csv') and '_system_metrics_' in fn]
+            candidates = [fn for fn in os.listdir(base_dir) if fn.endswith('.csv') and ('_system_metrics_' in fn or fn.startswith('system_metrics_full_') or fn.startswith('system_metrics_'))]
+            print(f"DEBUG: Found {len(candidates)} candidates: {candidates[:3] if candidates else []}")
             if not candidates:
                 y_values.append(np.nan)
+                y_errors.append(0.0)
                 continue
-            candidates.sort(key=lambda fn: os.path.getmtime(os.path.join(base_dir, fn)), reverse=True)
-            path = os.path.join(base_dir, candidates[0])
-            try:
-                df = pd.read_csv(path)
-                if 'pod_name' not in df.columns or metric not in df.columns:
+            
+            # Group candidates by run number
+            run_files = []
+            for fn in candidates:
+                run_match = RUN_PATTERN.search(fn)
+                if run_match:
+                    run_files.append(fn)
+            
+            # If we have multiple run files, compute mean and std across runs
+            if len(run_files) > 1:
+                full_files = [fn for fn in run_files if fn.startswith('system_metrics_full_')]
+                if full_files:
+                    run_files = full_files
+                
+                run_means = []
+                for fn in run_files:
+                    path = os.path.join(base_dir, fn)
+                    try:
+                        df = pd.read_csv(path)
+                        if 'pod_name' not in df.columns or metric not in df.columns:
+                            continue
+                        df_ap = df[df['pod_name'] == 'ALL_PODS']
+                        if df_ap.empty:
+                            continue
+                        mean_val = float(df_ap[metric].mean())
+                        run_means.append(mean_val)
+                    except Exception:
+                        continue
+                
+                if run_means:
+                    y_values.append(float(np.mean(run_means)))
+                    y_errors.append(float(np.std(run_means, ddof=1)) if len(run_means) > 1 else 0.0)
+                    print(f"DEBUG: Mean={np.mean(run_means):.4f}, Std={np.std(run_means, ddof=1) if len(run_means) > 1 else 0.0:.4f} from {len(run_means)} runs")
+                else:
                     y_values.append(np.nan)
-                    continue
-                df_ap = df[df['pod_name'] == 'ALL_PODS']
-                if df_ap.empty:
+                    y_errors.append(0.0)
+            else:
+                # Single file or no run files
+                full_files = [fn for fn in candidates if fn.startswith('system_metrics_full_')]
+                if full_files:
+                    candidates = full_files
+                candidates.sort(key=lambda fn: os.path.getmtime(os.path.join(base_dir, fn)), reverse=True)
+                path = os.path.join(base_dir, candidates[0])
+                print(f"DEBUG: Reading file: {path}")
+                try:
+                    df = pd.read_csv(path)
+                    print(f"DEBUG: CSV loaded, shape={df.shape}, columns={df.columns.tolist()}")
+                    if 'pod_name' not in df.columns or metric not in df.columns:
+                        print(f"DEBUG: Missing columns - pod_name={'pod_name' in df.columns}, metric={metric in df.columns}")
+                        y_values.append(np.nan)
+                        y_errors.append(0.0)
+                        continue
+                    df_ap = df[df['pod_name'] == 'ALL_PODS']
+                    print(f"DEBUG: ALL_PODS rows found: {len(df_ap)}")
+                    if df_ap.empty:
+                        print(f"DEBUG: No ALL_PODS data found")
+                        y_values.append(np.nan)
+                        y_errors.append(0.0)
+                        continue
+                    # average across timestamps for ALL_PODS
+                    mean_val = float(df_ap[metric].mean())
+                    print(f"DEBUG: Mean value for {metric}: {mean_val}")
+                    y_values.append(mean_val)
+                    y_errors.append(0.0)
+                except Exception as e:
+                    print(f"DEBUG: Exception occurred: {e}")
                     y_values.append(np.nan)
-                    continue
-                # average across timestamps for ALL_PODS
-                y_values.append(float(df_ap[metric].mean()))
-            except Exception:
-                y_values.append(np.nan)
-        ax.plot(users_list, y_values, label=f'replicas={replicas}', linestyle=_linestyle_for_replicas(replicas), marker='o', alpha=0.9)
+                    y_errors.append(0.0)
+        
+        print(f"DEBUG: y_values for replicas={replicas}: {y_values}")
+        print(f"DEBUG: y_errors for replicas={replicas}: {y_errors}")
+        ax.errorbar(users_list, y_values, yerr=y_errors, label=f'replicas={replicas}', 
+                   linestyle=_linestyle_for_replicas(replicas), marker='o', alpha=0.9, capsize=3)
 
     ax.set_xlabel('users')
     ax.set_ylabel(metric.replace('_', ' '))
@@ -540,6 +844,8 @@ def main():
     parser.add_argument('--trends', action='store_true', help='Generate overall trend analysis (how metrics change with user count)')
     parser.add_argument('--allpods-overview', action='store_true', help='Generate ALL_PODS overview (metric vs users, lines per replicas)')
     parser.add_argument('--allpods-metric', default='cpu_usage_percent', help='Metric column to use for ALL_PODS overview')
+    parser.add_argument('--boxplot', action='store_true', help='Generate boxplot showing distribution of all data points per (replicas, users)')
+    parser.add_argument('--boxplot-metric', default='cpu_usage_percent', help='Metric column to use for boxplot')
     args = parser.parse_args()
 
     df = build_comparison(args.root, args.service)
@@ -559,13 +865,13 @@ def main():
     df.to_csv(args.output, index=False)
     print(f'Comparison written to: {args.output}')
 
-    # Plots (metric-specific overview with 2 subplots)
+    # Plots (metric-specific overview with 2 subplots: boxplot + success rate)
     if args.plot:
         if not args.service:
             print('Plotting requires --service to be specified. Skipping plots.')
             return
         outdir = args.outdir or args.root
-        metric_imgs = generate_metric_specific_overview(df, args.service, outdir, metric_col=args.overview_metric)
+        metric_imgs = generate_metric_specific_overview(args.root, df, args.service, outdir, metric_col=args.overview_metric)
         if metric_imgs:
             print('Generated plots:')
             for p in metric_imgs:
@@ -614,6 +920,20 @@ def main():
                 print(f'  {p}')
         else:
             print('No ALL_PODS overview generated (no matching data).')
+
+    # Boxplot
+    if args.boxplot:
+        if not args.service:
+            print('Boxplot requires --service to be specified. Skipping.')
+            return
+        outdir = args.outdir or args.root
+        bp_imgs = generate_boxplot_overview(args.root, args.service, outdir, metric=args.boxplot_metric)
+        if bp_imgs:
+            print('Generated boxplot:')
+            for p in bp_imgs:
+                print(f'  {p}')
+        else:
+            print('No boxplot generated (no matching data).')
 
 
 if __name__ == '__main__':

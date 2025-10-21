@@ -10,14 +10,13 @@ import time
 import subprocess
 import threading
 import argparse
-import pandas as pd
-import matplotlib.pyplot as plt
-import matplotlib.dates as mdates
+# Optional: pandas/matplotlib are not required at runtime; avoid hard dependency
 from datetime import datetime, timedelta
 import signal
 import atexit
 import requests
 import json
+import pandas as pd
 import csv
 from typing import Dict, List, Optional
 
@@ -38,6 +37,11 @@ from typing import Dict, List, Optional
 
 # Service configurations - HTTP-based only
 SERVICES = {
+    'frontend': {
+        'host': '172.18.0.3',
+        'port': 8080,
+        'endpoint': '/'
+    },
     'productcatalogservice': {
         'host': '172.18.0.3',
         'port': 8080,
@@ -90,8 +94,9 @@ class UnifiedMonitor:
         self.csv_writers = {}
         self.csv_files = {}
         
-        # Prometheus設定
-        self.prometheus_url = "http://localhost:9090"
+        # Prometheus設定（環境変数で上書き可能）
+        # クラスタ内デフォルト: istio-systemのPrometheusサービス
+        self.prometheus_url = os.getenv("PROMETHEUS_URL", "http://prometheus.istio-system.svc:9090")
         
         os.makedirs(output_dir, exist_ok=True)
         self._setup_csv_files()
@@ -100,8 +105,12 @@ class UnifiedMonitor:
         """CSVファイルをセットアップ"""
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         
+        # RUN_NUMBER環境変数を取得（設定されていない場合は空文字列）
+        run_number = os.getenv("RUN_NUMBER", "")
+        run_suffix = f"_run{run_number}" if run_number else ""
+        
         # CPU/メモリ/ネットワークメトリクス
-        cpu_csv_path = f"{self.output_dir}/{self.service_name}_system_metrics_{timestamp}.csv"
+        cpu_csv_path = f"{self.output_dir}/{self.service_name}_system_metrics_{timestamp}{run_suffix}.csv"
         self.csv_files['system'] = open(cpu_csv_path, "w", newline="")
         self.csv_writers['system'] = csv.writer(self.csv_files['system'])
         self.csv_writers['system'].writerow([
@@ -131,12 +140,15 @@ class UnifiedMonitor:
                 svc_obj = _json.loads(svc_result.stdout)
                 selector = svc_obj.get('spec', {}).get('selector', {})
                 if selector:
+                    # 例: {"app": "productcatalogservice", "version": "v1"} → app=productcatalogservice,version=v1
                     selector_str = ','.join([f"{k}={v}" for k, v in selector.items()])
                     selectors_to_try.insert(0, selector_str)
         except Exception as _:
             pass
 
         all_pods: List[str] = []
+        seen_pods = set()
+
         for selector in selectors_to_try:
             try:
                 cmd = [
@@ -147,11 +159,16 @@ class UnifiedMonitor:
                 result = subprocess.run(cmd, capture_output=True, text=True, check=False)
                 if result.returncode == 0 and result.stdout:
                     pod_names = [p for p in result.stdout.strip().split() if p]
-                    print(pod_names)
                     for p in pod_names:
-                        pod_name = p.split('-')[0]
-                        if pod_name == self.service_name:
+                        # 厳密に対象サービスのPodだけに限定
+                        if not p.startswith(f"{self.service_name}-"):
+                            continue
+                        if p not in seen_pods:
+                            seen_pods.add(p)
                             all_pods.append(p)
+                    # 何らかのPodが取得できたら、最初の有効なselectorで打ち切り
+                    if all_pods:
+                        break
             except Exception as _:
                 continue
 
@@ -398,7 +415,9 @@ class ServiceLoadTester:
         
         # Setup logging
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        self.log_file = f"{output_dir}/{service_name}_load_test_{timestamp}.csv"
+        run_number = os.getenv("RUN_NUMBER", "")
+        run_suffix = f"_run{run_number}" if run_number else ""
+        self.log_file = f"{output_dir}/{service_name}_load_test_{timestamp}{run_suffix}.csv"
         
     def create_locustfile(self):
         """Create a temporary locustfile for the specific service"""
@@ -406,14 +425,12 @@ class ServiceLoadTester:
         locust_content = f'''#!/usr/bin/env python3
 import time
 import random
-from faker import Faker
 from locust import HttpUser, task, between, events
 import json
 import datetime
 import csv
 import os
 
-fake = Faker()
 
 # Product list from original locustfile.py
 products = [
@@ -431,8 +448,8 @@ products = [
 class {self.service_name.capitalize()}User(HttpUser):
     wait_time = between(1, 10)
     
-    # Set host based on service - use NodePort
-    host = "http://172.18.0.2:32075"
+    # Prefer env TARGET_HOST, else default to in-cluster service DNS of frontend
+    host = os.getenv("TARGET_HOST", "http://frontend.default.svc.cluster.local")
     
     @task
     def test_service(self):
@@ -489,6 +506,36 @@ class {self.service_name.capitalize()}User(HttpUser):
         response = self.client.get("/")
         return response
 
+
+# Per-request CSV logging using Locust events. This will write a CSV file
+# into the same output directory used by the test runner so the harness can
+# analyze client-observed latencies.
+output_dir = os.getenv('LOCUST_OUTPUT_DIR', r"{self.output_dir}")
+os.makedirs(output_dir, exist_ok=True)
+per_request_path = os.path.join(output_dir, '{self.service_name}_per_request.csv')
+_need_header = not os.path.exists(per_request_path)
+_per_f = open(per_request_path, 'a', newline='')
+_per_writer = csv.writer(_per_f)
+if _need_header:
+    _per_writer.writerow(['timestamp', 'request_type', 'name', 'response_time_ms', 'response_length', 'status', 'success'])
+
+@events.request.add_listener
+def on_request(request_type, name, response_time, response_length, response, context, exception):
+    try:
+        ts = datetime.datetime.utcnow().isoformat()
+        status = 0
+        success = 0
+        try:
+            if response is not None:
+                status = getattr(response, 'status_code', 0)
+            success = 0 if exception else 1
+        except Exception:
+            pass
+        _per_writer.writerow([ts, request_type, name, float(response_time), int(response_length or 0), int(status), int(success)])
+        _per_f.flush()
+    except Exception:
+        pass
+
 # Create concrete user class
 class TestUser({self.service_name.capitalize()}User):
     pass
@@ -506,20 +553,28 @@ class TestUser({self.service_name.capitalize()}User):
         # Create locustfile
         locustfile_path = self.create_locustfile()
         
+        # Calculate spawn time based on spawn-rate
+        spawn_rate = 10
+        spawn_time = self.user_count / spawn_rate
+        
+        # Calculate total timeout: spawn time + run time + buffer
+        total_timeout = int(spawn_time + self.duration + 60)
+        print(f"Estimated spawn time: {spawn_time:.1f}s, Total timeout: {total_timeout}s")
+        
         # Run locust with CSV output for success rate metrics
         cmd = [
             'locust',
             '-f', locustfile_path,
             '--headless',
             '--users', str(self.user_count),
-            '--spawn-rate', '10',
+            '--spawn-rate', str(spawn_rate),
             '--run-time', f'{self.duration}s',
             '--csv', f'{self.output_dir}/{self.service_name}_results',
             '--logfile', f'{self.output_dir}/{self.service_name}_locust.log'
         ]
         
         try:
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=self.duration + 60)
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=total_timeout)
             if result.returncode == 0:
                 print(f"Load test completed for {self.service_name}")
                 return True
@@ -527,7 +582,7 @@ class TestUser({self.service_name.capitalize()}User):
                 print(f"Load test failed for {self.service_name}: {result.stderr}")
                 return False
         except subprocess.TimeoutExpired:
-            print(f"Load test timed out for {self.service_name}")
+            print(f"Load test timed out for {self.service_name} after {total_timeout}s")
             return False
 
 
@@ -540,7 +595,7 @@ class IntegratedTestSystem:
         self.replica_count = replica_count
         
         # Create service-specific output directory
-        self.service_output_dir = f"{output_dir}/replica{replica_count}/{user_count}/{service_name}"
+        self.service_output_dir = f"{output_dir}/{service_name}/replica{replica_count}/{user_count}"
         os.makedirs(self.service_output_dir, exist_ok=True)
         
         # Initialize components
@@ -605,107 +660,7 @@ class IntegratedTestSystem:
             self.monitor.stop_monitoring()
             print("All tests stopped")
     
-    def create_visualization(self):
-        """Create visualization of test results"""
-        print(f"Creating visualization for {self.service_name}...")
-        
-        # Find CSV files
-        system_files = [f for f in os.listdir(self.service_output_dir) if '_system_metrics_' in f and f.endswith('.csv')]
-        locust_files = [f for f in os.listdir(self.service_output_dir) if f.endswith('_stats.csv')]
-        
-        if not system_files:
-            print(f"No metric files found for visualization")
-            return
-        
-        # Create figure with subplots (3x2 for success rate)
-        fig, axes = plt.subplots(3, 1,figsize=(20, 18))
-        fig.suptitle(f'Test Results - {self.service_name} (Users: {self.user_count}, Replica: {self.replica_count})', fontsize=16)
-        
-        # Plot CPU usage
-        ax1 = axes[0, 0]
-        if system_files:
-            df_system = pd.read_csv(os.path.join(self.service_output_dir, system_files[0]))
-            df_system['timestamp'] = pd.to_datetime(df_system['timestamp'])
-            ax1.plot(df_system['timestamp'], df_system['cpu_usage_percent'], 
-                    marker='o', markersize=3, label='CPU Usage (%)')
-        ax1.set_ylabel('CPU Usage (%)')
-        ax1.set_title('CPU Usage Over Time')
-        ax1.legend()
-        ax1.grid(True, alpha=0.3)
-        
-        # Plot Memory usage
-        ax2 = axes[0, 1]
-        if system_files:
-            ax2.plot(df_system['timestamp'], df_system['memory_usage_percent'], 
-                    marker='s', markersize=3, label='Memory Usage (%)')
-        ax2.set_ylabel('Memory Usage (%)')
-        ax2.set_title('Memory Usage Over Time')
-        ax2.legend()
-        ax2.grid(True, alpha=0.3)
-        
-        # Plot Network Traffic
-        ax3 = axes[1, 0]
-        if system_files:
-            ax3.plot(df_system['timestamp'], df_system['network_receive_bytes_total'], 
-                    marker='^', markersize=3, label='Network RX (bytes/sec)')
-            ax3.plot(df_system['timestamp'], df_system['network_transmit_bytes_total'], 
-                    marker='v', markersize=3, label='Network TX (bytes/sec)')
-        ax3.set_ylabel('Network Traffic (bytes/sec)')
-        ax3.set_title('Network Traffic Over Time')
-        ax3.legend()
-        ax3.grid(True, alpha=0.3)
-        
-        # Plot CPU Throttling
-        ax4 = axes[1, 1]
-        if system_files:
-            ax4.plot(df_system['timestamp'], df_system['cpu_throttled_seconds_total'], 
-                    marker='d', markersize=3, label='CPU Throttling (sec/sec)')
-        ax4.set_ylabel('CPU Throttling (sec/sec)')
-        ax4.set_title('CPU Throttling Over Time')
-        ax4.legend()
-        ax4.grid(True, alpha=0.3)
-        
-        # Plot Success Rate (if Locust stats available)
-        ax5 = axes[2, 0]
-        if locust_files:
-            df_locust = pd.read_csv(os.path.join(self.service_output_dir, locust_files[0]))
-            # Calculate success rate
-            df_locust['success_rate'] = ((df_locust['Request Count'] - df_locust['Failure Count']) / df_locust['Request Count'] * 100).fillna(0)
-            ax5.bar(df_locust['Name'], df_locust['success_rate'], alpha=0.7, color='green')
-            ax5.set_ylabel('Success Rate (%)')
-            ax5.set_title('Request Success Rate by Endpoint')
-            ax5.tick_params(axis='x', rotation=45)
-            ax5.grid(True, alpha=0.3)
-        else:
-            ax5.text(0.5, 0.5, 'No Locust stats available', ha='center', va='center', transform=ax5.transAxes)
-            ax5.set_title('Request Success Rate by Endpoint')
-        
-        # Plot Response Time (if Locust stats available)
-        ax6 = axes[2, 1]
-        if locust_files:
-            ax6.bar(df_locust['Name'], df_locust['Average Response Time'], alpha=0.7, color='blue')
-            ax6.set_ylabel('Average Response Time (ms)')
-            ax6.set_title('Average Response Time by Endpoint')
-            ax6.tick_params(axis='x', rotation=45)
-            ax6.grid(True, alpha=0.3)
-        else:
-            ax6.text(0.5, 0.5, 'No Locust stats available', ha='center', va='center', transform=ax6.transAxes)
-            ax6.set_title('Average Response Time by Endpoint')
-        
-        # Format x-axis for all subplots
-        for ax in axes.flat:
-            ax.xaxis.set_major_formatter(mdates.DateFormatter('%H:%M:%S'))
-            ax.xaxis.set_major_locator(mdates.MinuteLocator(interval=1))
-            plt.setp(ax.xaxis.get_majorticklabels(), rotation=45)
-        
-        plt.tight_layout()
-        
-        # Save plot
-        plot_path = f"{self.service_output_dir}/{self.service_name}_test_results.png"
-        plt.savefig(plot_path, dpi=300, bbox_inches='tight')
-        print(f"Visualization saved to: {plot_path}")
-        
-        plt.close()
+ 
     
     def generate_summary_report(self):
         """Generate summary report"""
@@ -798,11 +753,28 @@ def run_service_test(service_name, user_counts, duration, output_dir, replica_co
         # Scale
         subprocess.run(['kubectl', 'scale', f'deployment/{name}', f'--replicas={replicas}', '-n', ns],
                        check=False, capture_output=True, text=True)
-        # Wait for rollout
-        rollout = subprocess.run(['kubectl', 'rollout', 'status', f'deployment/{name}', '-n', ns, '--timeout=120s'],
-                                 check=False, capture_output=True, text=True)
-        if rollout.returncode != 0:
-            print(f"Warning: Rollout wait failed: {rollout.stderr.strip()}")
+        # Wait for availability without watch (avoid fsnotify limits)
+        start = time.time()
+        timeout_sec = 120
+        check_interval = 3
+        while True:
+            try:
+                res = subprocess.run(
+                    ['kubectl', 'get', 'deploy', name, '-n', ns, '-o', 'json'],
+                    capture_output=True, text=True, check=False
+                )
+                if res.returncode == 0 and res.stdout:
+                    import json as _json
+                    obj = _json.loads(res.stdout)
+                    available = obj.get('status', {}).get('availableReplicas', 0) or 0
+                    if int(available) >= int(replicas):
+                        break
+            except Exception:
+                pass
+            if time.time() - start > timeout_sec:
+                print("Warning: Wait for available replicas timed out")
+                break
+            time.sleep(check_interval)
         # Small settle delay
         time.sleep(5)
 

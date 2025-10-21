@@ -16,12 +16,11 @@
 
 import random
 from locust import FastHttpUser, TaskSet, between, events
-from faker import Faker
 import datetime
 import json
 import time
 
-fake = Faker()
+#fake = Faker()
 
 products = [
     '0PUK6V6EV0',
@@ -136,6 +135,22 @@ class UserBehavior(TaskSet):
         viewCart: 200,
         checkout: 100}
 
+# --- Simple scenarios mirroring integrated_test_system ---
+class SimpleProductCatalog(TaskSet):
+    # Only GET "/"
+    tasks = {index: 1}
+
+class SimpleCart(TaskSet):
+    # Only GET "/cart"
+    tasks = {viewCart: 1}
+
 class WebsiteUser(FastHttpUser):
     tasks = [UserBehavior]
-    wait_time = between(1, 3)
+    wait_time = 1
+
+# Override tasks by SIMPLE_SERVICE env var to run minimal scenarios
+_simple_service = os.environ.get("SIMPLE_SERVICE", "").strip().lower()
+if _simple_service == 'productcatalogservice':
+    WebsiteUser.tasks = [SimpleProductCatalog]
+elif _simple_service == 'cartservice':
+    WebsiteUser.tasks = [SimpleCart]
