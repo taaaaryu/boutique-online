@@ -86,7 +86,6 @@ def generate_service_combinations(services, num_software):
     return all_combinations
 
 def calc_RUE(matrix, software_count, service_avail, server_avail, r_add, H):
-    # 各グループの可用性の平均を評価指標として計算（簡易版）
     sum_matrix = np.sum(matrix, axis=1)
     software_availability = calc_software_av_matrix(sum_matrix, service_avail, server_avail)
     system_avail = np.prod(software_availability)
@@ -264,7 +263,7 @@ def multi_start_greedy(r_add, service_avail, server_avail, H, num_service, NUM_S
     return best_global_matrices, best_global_counts, best_global_RUEs
 
 # ---------------------------
-# Greedy_Redundancyアルゴリズムの実装（シンプル版）
+# Greedy_Redundancyアルゴリズムの実装
 # ---------------------------
 def greedy_redundancy(sw_avail, sw_resource, H, max_redundancy):
     num_sw = len(sw_avail)
@@ -295,7 +294,6 @@ def parse_resource_limit(resource_limit_str, num_services):
         return factor * num_services
     return int(resource_limit_str)
 
-# === 追加: 可用性計算用関数 ===
 def calculate_service_availability(csv_filename, all_deployments):
     if not os.path.exists(csv_filename):
         return [1.0] * len(all_deployments)

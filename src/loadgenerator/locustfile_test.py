@@ -124,16 +124,10 @@ def logout(l):
 
 
 class UserBehavior(TaskSet):
-
     def on_start(self):
         index(self)
 
-    tasks = {index: 200,
-        setCurrency: 400,
-        browseProduct: 300,
-        addToCart: 300,
-        viewCart: 200,
-        checkout: 100}
+    tasks = {index: 100}
 
 # --- Simple scenarios mirroring integrated_test_system ---
 class SimpleProductCatalog(TaskSet):

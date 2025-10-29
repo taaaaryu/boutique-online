@@ -33,3 +33,5 @@ vendor/
 each_test/individual_service_results/*
 venv/
 istio-1.27.1/*
+each_test/*
+locust_results/users/test/*
