@@ -93,4 +93,39 @@ spec:
         host: frontend
         port:
           number: 80
-# [END servicemesh_release_istio_manifests_microservices_demo]
+---
+apiVersion: networking.istio.io/v1alpha3
+kind: EnvoyFilter
+metadata:
+  name: accesslog-rich-json
+spec:
+  configPatches:
+  - applyTo: NETWORK_FILTER
+    match:
+      context: ANY
+      listener:
+        filterChain:
+          filter:
+            name: envoy.filters.network.http_connection_manager
+    patch:
+      operation: MERGE
+      value:
+        typed_config:
+          "@type": type.googleapis.com/envoy.extensions.filters.network.http_connection_manager.v3.HttpConnectionManager
+          access_log:
+          - name: envoy.access_loggers.stdout
+            typed_config:
+              "@type": type.googleapis.com/envoy.extensions.access_loggers.stream.v3.StdoutAccessLog
+              log_format:
+                json_format:
+                  start_time: "%START_TIME%"
+                  method: "%REQ(:METHOD)%"
+                  path: "%REQ(X-ENVOY-ORIGINAL-PATH?:PATH)%"
+                  status: "%RESPONSE_CODE%"
+                  duration_ms: "%DURATION%"
+                  upstream_service_time_ms: "%RESP(X-ENVOY-UPSTREAM-SERVICE-TIME)%"
+                  upstream_host: "%UPSTREAM_HOST%"
+                  downstream_remote_address: "%DOWNSTREAM_REMOTE_ADDRESS%"
+                  bytes_received: "%BYTES_RECEIVED%"
+                  bytes_sent: "%BYTES_SENT%"
+                  response_flags: "%RESPONSE_FLAGS%"

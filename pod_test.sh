@@ -1,11 +1,18 @@
-#!/bin/bash
-set -euo pipefail
+
 
 # テストするユーザー数のリスト
-USER_COUNTS=(50)
+USER_COUNTS=(50 100 150 200 250 500 750 1000)
 
 # 実行回数を指定
-NUM_RUNS=3
+NUM_RUNS=5
+
+# pprof 計測設定（必要に応じて外部から上書き）
+PPROF_CAPTURE="${PPROF_CAPTURE:-true}"
+PPROF_LOCAL_PORT="${PPROF_LOCAL_PORT:-16060}"
+PPROF_TARGET_PORT="${PPROF_TARGET_PORT:-6060}"
+PPROF_CPU_SECONDS="${PPROF_CPU_SECONDS:-60}"
+PPROF_CPU_DELAY_SECONDS="${PPROF_CPU_DELAY_SECONDS:-20}"
+PPROF_MAX_WAIT_SECONDS="${PPROF_MAX_WAIT_SECONDS:-30}"
 
 # 各テストのランタイム
 SPAWN_RATE=50
@@ -25,6 +32,10 @@ OPERATOR_PATH_TEST="k8s-operator/my-operator/replicaset_test.py"
 
 # 結果を保存するルートディレクトリ
 RESULTS_DIR_TEST="locust_results/users/test"
+DUMP_ENVOY_JSON=1
+
+PPROF_PORT_FORWARD_PID=""
+PPROF_CPU_JOB_PID=""
 
 
 # 観察モードの環境（必要に応じて外部から上書き可）
@@ -124,10 +135,7 @@ start_operator() {
     mkdir -p "$log_dir"
     # Derive namespace from current context if available
     local current_ns
-    current_ns=$(kubectl config view --minify -o jsonpath='{..namespace}' 2>/dev/null || true)
-    if [ -z "$current_ns" ]; then
-        current_ns="default"
-    fi
+    current_ns=$(get_current_namespace)
     # Pass through optional PROMETHEUS_URL if set in the environment
     LOG_DIR="$log_dir" ARCH_TYPE="users" NAMESPACE="$current_ns" \
     PROMETHEUS_URL="${PROMETHEUS_URL:-http://localhost:9090}" \
@@ -226,12 +234,28 @@ run_tests_for_user_count() {
             # RunごとにOperatorを起動（SCALE_STEPSを単一値にして、その値に固定）
             SCALE_STEPS="$replica" start_operator "$run_dir"
 
+            if start_pprof_port_forward "$run_dir"; then
+                start_cpu_profile_capture "$run_dir" || true
+            fi
+
             LOG_DIR="$run_dir" RUN_NUM="$i" \
             locust -f "$LOCUSTFILE" --headless -u "${user_count}" -r "$SPAWN_RATE" \
                    --run-time "$RUN_TIME" --host "$HOST" \
                    --logfile "$run_dir/locust.log" \
                    --csv "$run_dir/locust" \
                    --csv-full-history
+
+            if [ -n "${PPROF_CPU_JOB_PID:-}" ]; then
+                if ! wait "$PPROF_CPU_JOB_PID"; then
+                    echo "Warning: CPU profile capture encountered an error (see ${run_dir}/frontend_cpu_profile.log)"
+                fi
+                PPROF_CPU_JOB_PID=""
+            fi
+
+            if [ -n "${PPROF_PORT_FORWARD_PID:-}" ]; then
+                collect_snapshot_profiles "$run_dir" || true
+            fi
+            stop_pprof_port_forward || true
 
             # Run単位でオペレーターを停止
             stop_operator
@@ -251,9 +275,163 @@ run_tests_for_user_count() {
 cleanup() {
     echo "==== Performing cleanup ===="
     stop_operator || true
+    stop_pprof_port_forward || true
     echo "Cleanup completed"
 }
 trap cleanup EXIT
+
+# 現在の namespace を取得（未設定なら default）
+get_current_namespace() {
+    local ns
+    ns=$(kubectl config view --minify -o jsonpath='{..namespace}' 2>/dev/null || true)
+    if [ -z "$ns" ]; then
+        ns="default"
+    fi
+    echo "$ns"
+}
+
+# frontend の稼働中 Pod 名称を取得
+get_running_frontend_pod() {
+    local namespace="$1"
+    kubectl get pods -n "$namespace" -l app=frontend \
+        -o jsonpath='{range .items[?(@.status.phase=="Running")]}{.metadata.name}{"\n"}{end}' 2>/dev/null | head -n1
+}
+
+# frontend pprof ポートフォワードを開始
+start_pprof_port_forward() {
+    local run_dir="$1"
+    PPROF_PORT_FORWARD_PID=""
+    if [ "$PPROF_CAPTURE" != "true" ]; then
+        return 0
+    fi
+
+    local namespace
+    namespace=$(get_current_namespace)
+
+    local frontend_pod=""
+    local tries=0
+    local max_tries=6
+    while [ $tries -lt $max_tries ]; do
+        frontend_pod=$(get_running_frontend_pod "$namespace")
+        if [ -n "$frontend_pod" ]; then
+            break
+        fi
+        echo "Waiting for running frontend pod... ($((tries + 1))/$max_tries)"
+        sleep 5
+        tries=$((tries + 1))
+    done
+
+    if [ -z "$frontend_pod" ]; then
+        echo "Warning: Could not find running frontend pod; skipping pprof capture"
+        return 1
+    fi
+
+    echo "Starting port-forward for frontend pprof (${frontend_pod}:${PPROF_TARGET_PORT} -> localhost:${PPROF_LOCAL_PORT})"
+    mkdir -p "$run_dir"
+    kubectl port-forward -n "$namespace" pod/"$frontend_pod" \
+        "${PPROF_LOCAL_PORT}:${PPROF_TARGET_PORT}" \
+        >"$run_dir/frontend_pprof_portforward.log" 2>&1 &
+    PPROF_PORT_FORWARD_PID=$!
+
+    local waited=0
+    while [ $waited -lt "$PPROF_MAX_WAIT_SECONDS" ]; do
+        if curl -fsS "http://127.0.0.1:${PPROF_LOCAL_PORT}/debug/pprof/" >/dev/null 2>&1; then
+            echo "pprof endpoint reachable at http://127.0.0.1:${PPROF_LOCAL_PORT}/debug/pprof/"
+            return 0
+        fi
+        sleep 2
+        waited=$((waited + 2))
+    done
+
+    echo "Warning: pprof endpoint not reachable within ${PPROF_MAX_WAIT_SECONDS}s; check ${run_dir}/frontend_pprof_portforward.log"
+    return 1
+}
+
+# frontend pprof ポートフォワードを停止
+stop_pprof_port_forward() {
+    if [ -n "${PPROF_PORT_FORWARD_PID:-}" ]; then
+        if kill "$PPROF_PORT_FORWARD_PID" >/dev/null 2>&1; then
+            wait "$PPROF_PORT_FORWARD_PID" 2>/dev/null || true
+        fi
+        PPROF_PORT_FORWARD_PID=""
+    fi
+}
+
+# CPU プロファイルをバックグラウンドで取得
+start_cpu_profile_capture() {
+    local run_dir="$1"
+    PPROF_CPU_JOB_PID=""
+    if [ "$PPROF_CAPTURE" != "true" ]; then
+        return 0
+    fi
+
+    local base_url="http://127.0.0.1:${PPROF_LOCAL_PORT}"
+    local cpu_profile_file="$run_dir/frontend_cpu.pb.gz"
+    local cpu_top_file="$run_dir/frontend_cpu_top.txt"
+    local cpu_cum_file="$run_dir/frontend_cpu_top_cum.txt"
+    local cpu_log_file="$run_dir/frontend_cpu_profile.log"
+
+    (
+        set +e
+        sleep "$PPROF_CPU_DELAY_SECONDS"
+        echo "Collecting CPU profile for ${PPROF_CPU_SECONDS}s..." | tee -a "$cpu_log_file"
+        if curl -fsS "${base_url}/debug/pprof/profile?seconds=${PPROF_CPU_SECONDS}" -o "$cpu_profile_file"; then
+            echo "CPU profile saved to $cpu_profile_file" | tee -a "$cpu_log_file"
+            if go tool pprof -top "$cpu_profile_file" >"$cpu_top_file" 2>>"$cpu_log_file"; then
+                echo "CPU top report saved to $cpu_top_file" | tee -a "$cpu_log_file"
+            else
+                echo "Warning: Failed to generate CPU top report" | tee -a "$cpu_log_file"
+            fi
+            if go tool pprof -cum -top "$cpu_profile_file" >"$cpu_cum_file" 2>>"$cpu_log_file"; then
+                echo "CPU cumulative top report saved to $cpu_cum_file" | tee -a "$cpu_log_file"
+            else
+                echo "Warning: Failed to generate CPU cumulative report" | tee -a "$cpu_log_file"
+            fi
+        else
+            echo "Warning: Failed to download CPU profile from ${base_url}" | tee -a "$cpu_log_file"
+        fi
+    ) &
+    PPROF_CPU_JOB_PID=$!
+}
+
+# ヒープ/ゴルーチンのスナップショットを取得
+collect_snapshot_profiles() {
+    local run_dir="$1"
+    if [ "$PPROF_CAPTURE" != "true" ]; then
+        return 0
+    fi
+
+    local base_url="http://127.0.0.1:${PPROF_LOCAL_PORT}"
+    local heap_profile_file="$run_dir/frontend_heap.pb.gz"
+    local heap_inuse_top="$run_dir/frontend_heap_inuse_top.txt"
+    local heap_alloc_top="$run_dir/frontend_heap_alloc_top.txt"
+    local goroutine_file="$run_dir/frontend_goroutines.txt"
+    local snapshot_log="$run_dir/frontend_pprof_snapshot.log"
+
+    echo "Collecting heap and goroutine snapshots..." | tee -a "$snapshot_log"
+
+    if curl -fsS "${base_url}/debug/pprof/heap" -o "$heap_profile_file"; then
+        echo "Heap profile saved to $heap_profile_file" | tee -a "$snapshot_log"
+        if go tool pprof -inuse_space -top "$heap_profile_file" >"$heap_inuse_top" 2>>"$snapshot_log"; then
+            echo "Heap inuse top saved to $heap_inuse_top" | tee -a "$snapshot_log"
+        else
+            echo "Warning: Failed to generate heap inuse report" | tee -a "$snapshot_log"
+        fi
+        if go tool pprof -alloc_space -top "$heap_profile_file" >"$heap_alloc_top" 2>>"$snapshot_log"; then
+            echo "Heap alloc top saved to $heap_alloc_top" | tee -a "$snapshot_log"
+        else
+            echo "Warning: Failed to generate heap alloc report" | tee -a "$snapshot_log"
+        fi
+    else
+        echo "Warning: Failed to download heap profile from ${base_url}" | tee -a "$snapshot_log"
+    fi
+
+    if curl -fsS "${base_url}/debug/pprof/goroutine?debug=2" -o "$goroutine_file"; then
+        echo "Goroutine dump saved to $goroutine_file" | tee -a "$snapshot_log"
+    else
+        echo "Warning: Failed to download goroutine dump from ${base_url}" | tee -a "$snapshot_log"
+    fi
+}
 
 # メイン処理開始
 echo "==== Starting Locust User Scaling Test with Replicaset-Test Operator ===="

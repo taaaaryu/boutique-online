@@ -1,6 +1,7 @@
 import os
 import csv
 import re
+import json
 from datetime import datetime
 import time
 import requests
@@ -13,6 +14,7 @@ SERVICE_DIR = os.path.join(LOG_DIR, "services")
 ARCH_TYPE = os.environ.get("ARCH_TYPE", "unknown")
 RUN_NUM = os.environ.get("RUN_NUM", "0")
 NAMESPACE = os.environ.get("NAMESPACE", "default")
+DUMP_ENVOY_JSON = 1
 
 def get_istio_proxy_container_name(pod):
     for c in pod.spec.containers:
@@ -45,7 +47,30 @@ def main():
         code_counts = {}
         timeout_count = 0  # タイムアウトカウント
         
+        # Optionally write raw Envoy JSON access logs alongside other results
+        # Append-only JSON Lines per pod to avoid mixing pod sources
+        json_out_fh = None
+        if DUMP_ENVOY_JSON and log_text:
+            service_subdir = os.path.join(SERVICE_DIR, service)
+            os.makedirs(service_subdir, exist_ok=True)
+            json_out_path = os.path.join(service_subdir, f"envoy_access_{pod_name}.jsonl")
+            try:
+                json_out_fh = open(json_out_path, "a", encoding="utf-8")
+            except Exception:
+                json_out_fh = None
+
         for line in log_text.splitlines():
+            # Try to persist raw json line if enabled
+            if json_out_fh:
+                ln = line.strip()
+                # If the line is json (best-effort), write as-is to keep Envoy's schema
+                if ln.startswith("{") and ln.endswith("}"):
+                    try:
+                        json.loads(ln)
+                        json_out_fh.write(ln + "\n")
+                    except Exception:
+                        pass
+
             # レスポンス時間を先にチェック
             time_match = re.search(r'" \d{3} - [^-]+ - "[^"]*" \d+ \d+ (\d+) (\d+)', line)
             is_timeout = False
@@ -73,6 +98,12 @@ def main():
         if timeout_count > 0:
             print(f"{pod_name}: タイムアウト {timeout_count} 件")
         
+        if json_out_fh:
+            try:
+                json_out_fh.close()
+            except Exception:
+                pass
+
         all_codes.update(code_counts.keys())
         if service not in service_logs:
             service_logs[service] = []
